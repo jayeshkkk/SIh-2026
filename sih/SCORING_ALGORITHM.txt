@@ -1,0 +1,727 @@
+================================================================================
+                    SCORING ALGORITHM DOCUMENTATION
+          NER Logistics Accessibility Intelligence Platform
+================================================================================
+
+PROJECT: Smart India Hackathon - AI/ML Route Planning Engine
+PURPOSE: Risk assessment, route recommendation, and safety scoring
+
+
+================================================================================
+1. MAIN SCORING COMPONENTS
+================================================================================
+
+The system uses a WEIGHTED COMPOSITE SCORING approach with three main scoring functions:
+
+   A) ROAD RISK SCORE (0-1 scale)
+   B) ROUTE SCORE (0-100 scale)
+      - Safety Score (0-40 points)
+      - Cost Score (0-40 points)
+      - Speed Score (0-20 points)
+
+
+================================================================================
+2. ROAD RISK SCORE - calculate_road_risk()
+================================================================================
+
+PRIMARY FORMULA:
+───────────────
+
+    R = (0.25 × Rf) + (0.20 × T) + (0.20 × RC) + (0.10 × Tr) + 
+        (0.15 × B) + (0.10 × H)
+
+Where:
+    R   = Road Risk Score (output: 0 to 1)
+    Rf  = Rainfall Risk Factor (0 to 1)
+    T   = Terrain Risk Factor (0 to 1)
+    RC  = Road Condition Risk Factor (0 to 1)
+    Tr  = Traffic Risk Factor (0 to 1)
+    B   = Bridge Status Risk Factor (0 to 1)
+    H   = Historical Incidents Risk Factor (0 to 1)
+
+
+ALTERNATIVE NOTATION (Mathematical):
+────────────────────────────────────
+
+    R_road = Σ(i=1 to 6) w_i × r_i
+
+    Where:
+        w₁ = 0.25 (rainfall weight)      r₁ = rainfall_risk
+        w₂ = 0.20 (terrain weight)       r₂ = terrain_risk
+        w₃ = 0.20 (condition weight)     r₃ = condition_risk
+        w₄ = 0.10 (traffic weight)       r₄ = traffic_risk
+        w₅ = 0.15 (bridge weight)        r₅ = bridge_risk
+        w₆ = 0.10 (historical weight)    r₆ = historical_risk
+
+
+WEIGHTS (Total = 1.0):
+   • rainfall:        0.25 (25%) - Most critical factor
+   • terrain:         0.20 (20%) - Topography impact
+   • road_condition:  0.20 (20%) - Infrastructure quality
+   • bridge_status:   0.15 (15%) - Critical crossing points
+   • traffic:         0.10 (10%) - Flow congestion
+   • historical:      0.10 (10%) - Past incident data
+
+
+DETAILED BREAKDOWN:
+
+A) RAINFALL FACTOR (Weight: 0.25)
+   Value Scale:
+   - > 100mm:  Risk = 1.0 (100% - Critical flooding risk)
+   - > 50mm:   Risk = 0.7 (70% - Heavy rain)
+   - > 20mm:   Risk = 0.4 (40% - Moderate rain)
+   - ≤ 20mm:   Risk = 0.1 (10% - Light/no rain)
+
+   FORMULA:
+   ────────
+        ⎧ 1.0    if rainfall > 100
+        ⎪ 0.7    if rainfall > 50
+   Rf = ⎨ 0.4    if rainfall > 20
+        ⎪ 0.1    if rainfall ≤ 20
+        ⎩
+
+   Contribution to Total Risk:
+        Rainfall_Contribution = 0.25 × Rf
+
+
+B) TERRAIN FACTOR (Weight: 0.20)
+   Terrain Type Risk Values:
+   - plains:       0.1 (10% - Safest terrain)
+   - hilly:        0.5 (50% - Medium risk)
+   - mountainous:  0.8 (80% - High risk)
+
+   FORMULA:
+   ────────
+        ⎧ 0.1    if terrain = "plains"
+   T  = ⎨ 0.5    if terrain = "hilly"
+        ⎩ 0.8    if terrain = "mountainous"
+
+   Contribution to Total Risk:
+        Terrain_Contribution = 0.20 × T
+
+
+C) ROAD CONDITION FACTOR (Weight: 0.20)
+   Road Condition Risk Values:
+   - good:   0.1 (10% - Well maintained)
+   - fair:   0.4 (40% - Acceptable condition)
+   - poor:   0.8 (80% - Severely damaged/deteriorated)
+
+   FORMULA:
+   ────────
+        ⎧ 0.1    if condition = "good"
+   RC = ⎨ 0.4    if condition = "fair"
+        ⎩ 0.8    if condition = "poor"
+
+   Contribution to Total Risk:
+        Condition_Contribution = 0.20 × RC
+
+
+D) TRAFFIC FACTOR (Weight: 0.10)
+   Traffic Level Risk Values:
+   - none:       0.0 (0% - Empty roads)
+   - light:      0.1 (10%)
+   - normal:     0.2 (20% - Standard flow)
+   - moderate:   0.4 (40%)
+   - heavy:      0.6 (60% - Congested)
+
+   FORMULA:
+   ────────
+        ⎧ 0.0    if traffic = "none"
+        ⎪ 0.1    if traffic = "light"
+   Tr = ⎨ 0.2    if traffic = "normal"
+        ⎪ 0.4    if traffic = "moderate"
+        ⎩ 0.6    if traffic = "heavy"
+
+   Contribution to Total Risk:
+        Traffic_Contribution = 0.10 × Tr
+
+
+E) HISTORICAL INCIDENTS FACTOR (Weight: 0.10)
+   Formula: min(recent_alerts_count × 0.15, 1.0)
+   
+   Logic:
+   - Counts alerts in affected districts from past 7 days
+   - Each incident adds 15% risk (capped at 100%)
+   - Example: 4+ recent incidents = 100% historical risk
+
+   FORMULA:
+   ────────
+        H = min(n_alerts × 0.15, 1.0)
+
+   Where:
+        n_alerts = count of incidents in past 7 days
+        
+   Expanded:
+        H = min(0.15 × A₁ + 0.15 × A₂ + ... + 0.15 × Aₙ, 1.0)
+        
+   Simplified:
+        H = min(0.15 × Σ(alerts), 1.0)
+
+   Contribution to Total Risk:
+        Historical_Contribution = 0.10 × H
+
+
+F) BRIDGE STATUS FACTOR (Weight: 0.15)
+   Status Hierarchy:
+   - closed:  1.0 (100% - Route impassable)
+   - partial: 0.5 (50% - Limited access)
+   - poor:    0.4 (40% - Structural concern)
+   - good:    0.0 (0% - Safe crossing)
+
+   FORMULA:
+   ────────
+        ⎧ 1.0    if any bridge.status = "closed"
+   B  = ⎨ 0.5    if max bridge.status = "partial"
+        ⎩ max(0.4 if poor condition, 0)
+
+   Contribution to Total Risk:
+        Bridge_Contribution = 0.15 × B
+
+
+FINAL NORMALIZATION:
+   • Road Status Check:
+     - If road.status == 'blocked':  Risk = 1.0 (maximum)
+     - If road.status == 'partial':  Risk = max(calculated_risk, 0.75)
+     - Otherwise:                     Risk = min(calculated_risk, 1.0)
+
+
+EXAMPLE CALCULATION:
+   Scenario: Hilly road, fair condition, moderate traffic, 60mm rainfall, 2 recent alerts
+   
+   Step 1: Identify factor values
+   ────────────────────────────
+        Rf = 0.7   (rainfall > 50mm)
+        T  = 0.5   (hilly terrain)
+        RC = 0.4   (fair condition)
+        Tr = 0.4   (moderate traffic)
+        B  = 0.0   (bridges in good condition)
+        H  = min(2 × 0.15, 1.0) = 0.30  (2 recent alerts)
+
+   Step 2: Apply weighted formula
+   ──────────────────────────────
+        R = (0.25 × 0.7) + (0.20 × 0.5) + (0.20 × 0.4) + 
+            (0.10 × 0.4) + (0.15 × 0.0) + (0.10 × 0.30)
+   
+   Step 3: Calculate contributions
+   ───────────────────────────────
+        Rainfall:     0.25 × 0.7  = 0.175
+        Terrain:      0.20 × 0.5  = 0.100
+        Condition:    0.20 × 0.4  = 0.080
+        Traffic:      0.10 × 0.4  = 0.040
+        Bridge:       0.15 × 0.0  = 0.000
+        Historical:   0.10 × 0.30 = 0.030
+        ───────────────────────────────
+        TOTAL RISK:   R = 0.425
+
+   Result: 42.5% Risk Score
+   ───────────────────────────
+   This road segment has a MEDIUM-HIGH risk level and would trigger caution measures.
+
+
+================================================================================
+3. ROUTE SCORE - _rank_routes()
+================================================================================
+
+PRIMARY FORMULA:
+────────────────
+
+    Score_route = S_safety + S_cost + S_speed
+
+Where:
+    Score_route = Total Route Score (0 to 100)
+    S_safety    = Safety Score (0 to 40)
+    S_cost      = Cost Score (0 to 40)
+    S_speed     = Speed Score (0 to 20)
+
+
+OVERALL ROUTE SCORE (0-100 scale):
+   
+   Route Score = Safety Score + Cost Score + Speed Score
+   
+   Where:
+   • Safety Score:     0-40 points
+   • Cost Score:       0-40 points  
+   • Speed Score:      0-20 points
+   • TOTAL:            0-100 points
+
+
+A) SAFETY SCORE (0-40 points)
+   Formula: (1 - average_risk) × 40
+   
+   MATHEMATICAL FORMULA:
+   ────────────────────
+        S_safety = (1 - R_avg) × 40
+
+   Where:
+        R_avg = average risk across all road segments in route
+        
+   Derivation:
+        • R_avg ranges from 0 (no risk) to 1 (maximum risk)
+        • (1 - R_avg) inverts the risk (higher safety = lower risk)
+        • Multiply by 40 to scale to maximum 40 points
+        
+   Bounded Result:
+        S_safety ∈ [0, 40]  (always between 0 and 40)
+
+   Calculation:
+   - Takes average risk across all segments in route
+   - Inverts it (higher safety = lower risk)
+   - Scales to 40-point maximum
+   
+   Example:
+   - Risk = 0.3  → Safety Score = (1 - 0.3) × 40 = 28 points
+   - Risk = 0.7  → Safety Score = (1 - 0.7) × 40 = 12 points
+   - Risk = 1.0  → Safety Score = 0 points (blocked route)
+
+   Special Case (Blocked Routes):
+   ───────────────────────────────
+        If route.blocked == True:
+            S_safety = 0
+
+
+B) COST SCORE (0-40 points)
+   Formula: cost_efficiency_score × 0.4
+   
+   MATHEMATICAL FORMULA:
+   ────────────────────
+        S_cost = E_cost × 0.4
+
+   Where:
+        E_cost = min(100, (50 × C_base) / C_route)
+        
+   Detailed Expansion:
+   ──────────────────
+        C_base = (Price_min + Price_max) / 2      [base cost per km]
+        
+        C_route = Total_distance × Rate_factor
+        
+        Rate_factor = ⎧ 3.5  if air_route
+                      ⎩ 1.0  if ground_route
+        
+        E_cost = min(100, (50 × C_base) / C_route)
+        
+        S_cost = E_cost × 0.4    ∈ [0, 40]
+
+   Calculation Steps:
+   1. Calculate base cost per km from shipment pricing
+        C_base = (price_min + price_max) / 2
+
+   2. Determine if route is air corridor (multiplier = 3.5x)
+        Rate_factor = 3.5 for air routes, 1.0 for ground
+
+   3. Estimate total cost: total_distance × cost_rate
+        C_route = distance × (C_base × Rate_factor)
+
+   4. Calculate cost per km
+        C_per_km = C_route / distance
+
+   5. Compute efficiency: lower cost per km = higher efficiency
+        E_cost = min(100, (50 × C_base) / C_per_km)
+
+   6. Scale to 40-point maximum
+        S_cost = E_cost × 0.4
+
+   Shipment Type Pricing (Base Cost per km):
+   ──────────────────────────────────────
+   - small_pickup:      ₹22-35    → C_base = ₹28.5
+   - light_commercial:  ₹30-45    → C_base = ₹37.5
+   - medium_heavy:      ₹40-65    → C_base = ₹52.5
+   - large_container:   ₹60-90    → C_base = ₹75
+
+   Example Calculation:
+   ────────────────────
+   Given: Medium-heavy vehicle, 200 km ground route, base cost ₹52.5/km
+   
+        C_route = 200 km × ₹52.5 = ₹10,500
+        E_cost = min(100, (50 × 52.5) / 52.5) = min(100, 50) = 50
+        S_cost = 50 × 0.4 = 20 points
+
+   Special Case (Blocked Routes):
+   ───────────────────────────────
+        If route.blocked == True:
+            S_cost = 0
+
+
+C) SPEED SCORE (0-20 points)
+   Formula: min(20, (fastest_time / route_time) × 20)
+   
+   MATHEMATICAL FORMULA:
+   ────────────────────
+        S_speed = min(20, (T_fastest / T_route) × 20)
+
+   Where:
+        T_fastest = minimum travel time among all candidate routes
+        T_route   = travel time for current route
+        
+   Simplified:
+        S_speed = (T_fastest / T_route) × 20,  capped at 20
+        
+   Bounded Result:
+        S_speed ∈ [0, 20]  (always between 0 and 20)
+
+   Calculation:
+   - Identifies fastest route's travel time
+   - Compares each route against fastest
+   - Routes closer to fastest = higher score
+   - Scales to 20-point maximum
+   
+   Example:
+   ────────
+   Scenario: 3 routes with different travel times
+   
+        Route A: T_fastest = 300 minutes  (reference)
+        Route B: T_route = 300 minutes
+        Route C: T_route = 400 minutes
+        Route D: T_route = 420 minutes
+   
+   Scores:
+        Route A: S_speed = min(20, (300/300) × 20) = 20 points
+        Route B: S_speed = min(20, (300/300) × 20) = 20 points
+        Route C: S_speed = min(20, (300/400) × 20) = 15 points
+        Route D: S_speed = min(20, (300/420) × 20) = 14.3 points
+
+   Special Case (Blocked Routes):
+   ───────────────────────────────
+        If route.blocked == True:
+            S_speed = 0
+
+
+D) DISRUPTION DETECTION
+   Routes marked as "blocked" receive:
+   - Safety Score = 0
+   - Speed Score = 0
+   - Cost Score = 0
+   - Route Score = 0 (effectively eliminated from ranking)
+
+
+================================================================================
+4. DISRUPTION PREDICTION - predict_disruptions()
+================================================================================
+
+RISK-BASED TRIGGERING FORMULA:
+───────────────────────────────
+
+   Trigger Prediction = TRUE  if ANY of:
+   
+        (a) R > 0.7
+        (b) road.status ∈ {"blocked", "partial"}
+        (c) (road.condition ∈ {"poor", "fair"}) ∧ 
+            (terrain ∈ {"hilly", "mountainous"})
+        (d) rainfall ≥ 30 mm
+
+
+DISRUPTION TYPE CLASSIFICATION:
+   Logic: Hierarchical decision tree
+   
+   1. IF road.status == 'blocked'
+      → Type: 'road_closure'
+   
+   2. ELSE IF rainfall > 80mm
+      → IF terrain in ['hilly', 'mountainous']
+         → Type: 'landslide'
+      → ELSE
+         → Type: 'flood'
+   
+   3. ELSE IF rainfall > 30mm
+      → IF road.condition == 'poor'
+         → Type: 'road_damage'
+      → ELSE
+         → Type: 'water_logging'
+   
+   4. ELSE IF road.condition == 'poor'
+      → Type: 'road_failure'
+   
+   5. ELSE IF weather.condition == 'snow_rain'
+      → Type: 'snow_blockage'
+   
+   6. ELSE
+      → Type: 'traffic_congestion'
+
+
+CONFIDENCE LEVELS:
+   • High:    risk > 0.85 OR road is blocked/partial
+   • Medium:  risk > 0.70 OR poor/fair condition on hilly/mountainous terrain OR rainfall ≥ 30mm
+   • Low:     risk > 0.65 (all others)
+
+
+DELAY ESTIMATION:
+   Formula: delay_minutes = 15 + (risk × 3 × 60 × length_factor)
+   
+   MATHEMATICAL FORMULA:
+   ────────────────────
+        D = D_base + (R × M × T_unit × L_factor)
+
+   Where:
+        D           = Delay in minutes
+        D_base      = 15 minutes (base minimum delay)
+        R           = Road risk score (0 to 1)
+        M           = Risk multiplier (3x)
+        T_unit      = Time conversion factor (60 minutes/hour)
+        L_factor    = road_length_km / 50
+        
+   Simplified:
+        D = 15 + (R × 3 × 60 × (L / 50))
+        D = 15 + (R × 3.6 × L)
+        
+   Integer Result:
+        D_final = ⌊D⌋  (floor function)
+
+   Example:
+   ────────
+   Given: Risk = 0.5, Road length = 100 km
+   
+        L_factor = 100 / 50 = 2.0
+        D = 15 + (0.5 × 3 × 60 × 2.0)
+        D = 15 + (0.5 × 360)
+        D = 15 + 180
+        D = 195 minutes ≈ 3.25 hours
+
+
+================================================================================
+5. ALGORITHM CHARACTERISTICS
+================================================================================
+
+✓ WEIGHTED COMPOSITE SCORING:
+  - Multiple independent factors combined with mathematical weights
+  - Flexible adjustment: weights can be tuned for different risk profiles
+
+✓ NORMALIZED SCALE:
+  - Road Risk: 0-1 (0% to 100%)
+  - Route Score: 0-100 (0% to 100%)
+  - Allows easy comparison and thresholding
+
+✓ HIERARCHICAL DECISION MAKING:
+  - Primary: safety (40 points)
+  - Secondary: cost (40 points)
+  - Tertiary: speed (20 points)
+  - Reflects priorities for logistics planning
+
+✓ DYNAMIC PATHFINDING:
+  - Dijkstra-inspired shortest path algorithm
+  - Weights adjust based on risk assessment
+  - Returns top 5 routes ranked by composite score
+
+✓ REAL-TIME ADAPTATION:
+  - Incorporates live weather data
+  - Responds to current road status
+  - Updates based on recent incident history
+
+
+================================================================================
+6. MATHEMATICAL FOUNDATION
+================================================================================
+
+Core Concepts Used:
+• Weighted Average: sum(weight × value) for independent factors
+• Normalization: scaling values to 0-1 or 0-100 range
+• Graph Theory: node-edge paths with weighted edges
+• Comparative Ranking: relative performance metrics
+• Thresholding: trigger points for alerts and recommendations
+
+
+Key Algorithms:
+• Weighted Risk Aggregation: Multi-factor risk computation
+• Shortest Path (Dijkstra-style): Route optimization
+• Lexicographic Ranking: Multi-objective sorting
+  (Primary: route_score, Secondary: safety_score, Tertiary: -time)
+
+
+================================================================================
+7. RECOMMENDATIONS BASED ON RISK LEVELS
+================================================================================
+
+Risk > 0.90 (90%):
+   → "ROUTE CLOSURE RECOMMENDED"
+   → Deploy emergency response, issue public advisory
+
+Risk > 0.80 (80%):
+   → "HEAVY RESTRICTION"
+   → Alternate routes, restrict heavy vehicles, enhance monitoring
+
+Risk > 0.70 (70%):
+   → "CAUTION REQUIRED"
+   → Reduce speed limits, deploy warning signage, monitor closely
+
+Risk ≤ 0.70 (70%):
+   → "NORMAL PRECAUTIONS"
+   → Standard safety measures sufficient
+
+
+================================================================================
+8. IMPLEMENTATION NOTES
+================================================================================
+
+Language: Python
+Framework: Flask with SQLAlchemy ORM
+Data Sources:
+   • RoadSegment: Infrastructure data
+   • WeatherData: Real-time rainfall, conditions
+   • Bridge: Critical crossing statuses
+   • Alert: Historical incident tracking
+   • Vehicle: Transport type classification
+   • District: Geographic reference
+
+Performance: O(n log n) for pathfinding with n roads/segments
+Scalability: Handles 20+ route predictions per query
+
+
+================================================================================
+9. QUICK REFERENCE - ALL FORMULAS
+================================================================================
+
+A) ROAD RISK SCORE:
+   ─────────────────
+        R = 0.25×Rf + 0.20×T + 0.20×RC + 0.10×Tr + 0.15×B + 0.10×H
+        
+   Where each factor ∈ [0, 1]
+   Output: R ∈ [0, 1]
+
+
+B) SAFETY SCORE:
+   ───────────────
+        S_safety = (1 - R_avg) × 40
+        
+   Output: S_safety ∈ [0, 40]
+
+
+C) COST SCORE:
+   ────────────
+        E_cost = min(100, (50 × C_base) / C_per_km)
+        S_cost = E_cost × 0.4
+        
+   Output: S_cost ∈ [0, 40]
+
+
+D) SPEED SCORE:
+   ──────────────
+        S_speed = min(20, (T_fastest / T_route) × 20)
+        
+   Output: S_speed ∈ [0, 20]
+
+
+E) TOTAL ROUTE SCORE:
+   ───────────────────
+        Score = S_safety + S_cost + S_speed
+        
+   Output: Score ∈ [0, 100]
+
+
+F) DELAY ESTIMATION:
+   ──────────────────
+        D = 15 + (R × 3 × 60 × (L / 50))
+        D = 15 + 3.6 × R × L
+        
+   Where: R = risk [0-1], L = length [km]
+   Output: D = minutes
+
+
+G) DISRUPTION TRIGGER:
+   ────────────────────
+        TRIGGER = (R > 0.7) ∨ (status ∈ {blocked, partial}) ∨
+                  (condition ∈ {poor, fair} ∧ terrain ∈ {hilly, mountainous}) ∨
+                  (rainfall ≥ 30)
+
+
+H) CONFIDENCE LEVEL:
+   ──────────────────
+        confidence = "high"   if R > 0.85 OR status ∈ {blocked, partial}
+        confidence = "medium" if R > 0.70 OR (poor/fair + hilly/mountainous) OR rainfall ≥ 30
+        confidence = "low"    otherwise
+
+
+I) ROUTE RANKING (Lexicographic):
+   ────────────────────────────────
+        Sort by: (Score DESC, S_safety DESC, -Time ASC)
+        
+   Primary:   Maximize route score
+   Secondary: Maximize safety when tied
+   Tertiary:  Minimize time when both tied
+
+
+================================================================================
+10. MATHEMATICAL CONSTANTS & PARAMETERS
+================================================================================
+
+WEIGHT VECTOR (ω):
+   ω = [0.25, 0.20, 0.20, 0.15, 0.10, 0.10]  (sum = 1.0)
+   
+   ω₁ = Rainfall       = 0.25
+   ω₂ = Terrain        = 0.20
+   ω₃ = Condition      = 0.20
+   ω₄ = Bridge         = 0.15
+   ω₅ = Traffic        = 0.10
+   ω₆ = Historical     = 0.10
+
+
+POINT SCALES:
+   Safety Score:  [0, 40]
+   Cost Score:    [0, 40]
+   Speed Score:   [0, 20]
+   ─────────────────────
+   Total:         [0, 100]
+
+
+RISK THRESHOLDS:
+   Trigger Point:        R > 0.7  (70%)
+   High Confidence:      R > 0.85 (85%)
+   Caution Recommended:  R > 0.7  (70%)
+   Restriction Level:    R > 0.8  (80%)
+   Closure Recommended:  R > 0.9  (90%)
+
+
+DISTANCE SCALING:
+   Length Factor = L / 50  (where L = length in km)
+   This makes a 50 km road neutral, shorter roads less impactful
+
+
+TIME SCALING:
+   Base Delay = 15 minutes
+   Risk Multiplier = 3.0x
+   Time Unit = 60 minutes/hour
+   Combined Multiplier = 3.6
+
+
+HISTORICAL FACTOR:
+   Alert Weight = 0.15 per incident
+   Lookback Window = 7 days
+   Maximum = min(count × 0.15, 1.0)
+
+
+TRAFFIC & TERRAIN MAPPINGS:
+   
+   Traffic Levels:          Terrain Types:
+   ─────────────            ──────────────
+   none      → 0.0          plains      → 0.1
+   light     → 0.1          hilly       → 0.5
+   normal    → 0.2          mountainous → 0.8
+   moderate  → 0.4
+   heavy     → 0.6
+
+
+ROAD CONDITIONS:
+   good  → 0.1
+   fair  → 0.4
+   poor  → 0.8
+
+
+BRIDGE STATUS:
+   closed  → 1.0
+   partial → 0.5
+   poor    → 0.4
+   good    → 0.0
+
+
+RAINFALL INTENSITY:
+   > 100 mm → 1.0
+   > 50 mm  → 0.7
+   > 20 mm  → 0.4
+   ≤ 20 mm  → 0.1
+
+
+AIR ROUTE COST MULTIPLIER:
+   Air Cost = Ground Cost × 3.5
+
+
+================================================================================
+END OF DOCUMENT
+================================================================================

@@ -1,0 +1,257 @@
+{% extends "base.html" %}
+{% block title %}NER Logistics Intelligence Platform - Route Planner{% endblock %}
+{% block page_title %}Route Planner{% endblock %}
+
+{% block content %}
+<div class="grid-2">
+    <div class="card slide-in">
+        <div class="card-header">
+            <h3><i class="fas fa-route"></i> <span data-i18n="route_planner">AI Route Planner</span></h3>
+        </div>
+        <div class="card-body">
+            <div class="form-group">
+                <label for="from-location" data-i18n="from_label">From</label>
+                <select id="from-location" class="form-control" disabled>
+                    <option>Loading locations...</option>
+                </select>
+            </div>
+
+            <div class="form-group">
+                <label for="to-location" data-i18n="to_label">To</label>
+                <select id="to-location" class="form-control" disabled>
+                    <option>Loading locations...</option>
+                </select>
+            </div>
+
+            <div class="form-group">
+                <label for="avoid-risk" data-i18n="risk_filter">Risk Filter</label>
+                <select id="avoid-risk" class="form-control">
+                    <option value="true">Avoid high-risk roads</option>
+                    <option value="false">Include all roads</option>
+                </select>
+            </div>
+
+            <div class="form-group">
+                <label for="shipment-type">Shipment Type</label>
+                <select id="shipment-type" class="form-control">
+                    <option value="small_pickup">Mini / Small Pickup (0.5-2 tons) · ₹22-35/km</option>
+                    <option value="light_commercial">Light Commercial Vehicle (3-5 tons) · ₹30-45/km</option>
+                    <option value="medium_heavy" selected>Medium & Heavy Truck (7-16 tons) · ₹40-65/km</option>
+                    <option value="large_container">Multi-Axle / Large Container (20-40 tons) · ₹60-90+/km</option>
+                </select>
+            </div>
+
+            <button class="btn btn-primary" onclick="findRoutes()">
+                <i class="fas fa-search"></i> <span data-i18n="find_routes">Find Routes</span>
+            </button>
+        </div>
+    </div>
+
+    <div class="card slide-in" style="animation-delay:0.1s">
+        <div class="card-header">
+            <h3><i class="fas fa-chart-line"></i> <span data-i18n="risk_level">Route Risk Overview</span></h3>
+        </div>
+        <div class="card-body" id="route-risk-overview">
+            <div class="loading"><div class="spinner"></div><span data-i18n="prepare_route_analysis">Preparing route analysis...</span></div>
+        </div>
+    </div>
+</div>
+
+<div class="card slide-in" style="margin-top:20px;">
+    <div class="card-header">
+        <h3><i class="fas fa-map-marked-alt"></i> <span data-i18n="suggested_routes">Suggested Routes</span></h3>
+    </div>
+    <div class="card-body" id="alternate-routes-container">
+        <div class="loading"><div class="spinner"></div>Loading alternates...</div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+let latestRoutes = [];
+
+async function findRoutes() {
+    const fromLoc = document.getElementById('from-location').value.trim();
+    const toLoc = document.getElementById('to-location').value.trim();
+    const avoidRisk = document.getElementById('avoid-risk').value;
+    const shipmentType = document.getElementById('shipment-type').value;
+
+    if (!fromLoc || !toLoc) {
+        alert(translations['please_enter_both_locations'] || 'Please enter both origin and destination locations.');
+        return;
+    }
+
+    try {
+        const res = await fetch(`/api/routes/alternate?from=${encodeURIComponent(fromLoc)}&to=${encodeURIComponent(toLoc)}&avoid_high_risk=${avoidRisk}&shipment_type=${encodeURIComponent(shipmentType)}`);
+        const data = await res.json();
+
+        if (data.error) {
+            renderRouteRiskOverview([]);
+            renderAlternateRoutes([]);
+            return;
+        }
+
+        latestRoutes = data.routes || [];
+        renderRouteRiskOverview(latestRoutes);
+        renderAlternateRoutes(latestRoutes);
+    } catch (error) {
+        console.error('Route planner failed:', error);
+        document.getElementById('alternate-routes-container').innerHTML = `<p style="color:var(--gray);">${translations['unable_to_calculate_routes'] || 'Unable to calculate route alternatives.'}</p>`;
+    }
+}
+
+function renderRouteRiskOverview(routes) {
+    const container = document.getElementById('route-risk-overview');
+    const t = (key, fallback='') => translations[key] || fallback;
+
+    if (!routes.length) {
+        container.innerHTML = `<p style="color:var(--gray);">${t('no_route_data', 'No route data available. Try different locations.')}</p>`;
+        return;
+    }
+
+    const best = routes[0];
+    const risk = best.average_risk || 0;
+    const level = risk < 0.4 ? t('low', 'Low') : risk < 0.7 ? t('moderate', 'Moderate') : t('high', 'High');
+
+    container.innerHTML = `
+        <div style="display:flex; flex-direction:column; gap:12px;">
+            <div>
+                <div style="font-size:0.8rem; color:var(--gray); margin-bottom:4px;">${t('best_option', 'Best option')}</div>
+                <div style="font-size:1.2rem; font-weight:700;">${best.path.join(' → ')}</div>
+            </div>
+            <div>
+                <div style="display:flex; justify-content:space-between; margin-bottom:6px;">
+                    <span style="font-size:0.85rem; color:var(--gray);">${t('risk_level', 'Risk level')}</span>
+                    <span class="badge badge-${level === 'High' ? 'danger' : level === 'Moderate' ? 'warning' : 'success'}">${level}</span>
+                </div>
+                <div class="risk-meter">
+                    <div class="risk-fill ${risk < 0.4 ? 'low' : risk < 0.7 ? 'medium' : 'high'}" style="width:${Math.min(risk * 100, 100)}%"></div>
+                </div>
+            </div>
+            <div style="display:grid; grid-template-columns: repeat(4, 1fr); gap:12px;">
+                <div class="stat-card" style="padding:14px; min-height:0;">
+                    <div class="stat-info">
+                        <h4 style="font-size:1.1rem;">${best.route_score ?? 0}</h4>
+                        <p style="font-size:0.72rem;">Route score / 100</p>
+                    </div>
+                </div>
+                <div class="stat-card" style="padding:14px; min-height:0;">
+                    <div class="stat-info">
+                        <h4 style="font-size:1.1rem;">${best.safety_score ?? 0}</h4>
+                        <p style="font-size:0.72rem;">Safety / 40</p>
+                    </div>
+                </div>
+                <div class="stat-card" style="padding:14px; min-height:0;">
+                    <div class="stat-info">
+                        <h4 style="font-size:1.1rem;">${best.cost_score ?? 0}</h4>
+                        <p style="font-size:0.72rem;">Cost / 40</p>
+                    </div>
+                </div>
+                <div class="stat-card" style="padding:14px; min-height:0;">
+                    <div class="stat-info">
+                        <h4 style="font-size:1.1rem;">${best.speed_score ?? 0}</h4>
+                        <p style="font-size:0.72rem;">Speed / 20</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+function renderAlternateRoutes(routes) {
+    const container = document.getElementById('alternate-routes-container');
+    const t = (key, fallback='') => translations[key] || fallback;
+
+    if (!routes.length) {
+        container.innerHTML = `<p style="color:var(--gray);">${t('no_alternate_routes', 'No alternate routes found.')}</p>`;
+        return;
+    }
+
+    container.innerHTML = routes.map((route, index) => `
+        <div class="vehicle-card" style="margin-bottom:14px;">
+            <div class="vehicle-header">
+                <div class="vehicle-number">${t('option', 'Option')} ${index + 1}</div>
+                <div style="display:flex; align-items:center; gap:10px;">
+                    <span class="badge badge-${route.blocked ? 'danger' : (route.average_risk || 0) < 0.4 ? 'success' : (route.average_risk || 0) < 0.7 ? 'warning' : 'danger'}">
+                        ${(route.recommendation || 'RECOMMENDED').replace('_', ' ')}
+                    </span>
+                    <button class="btn btn-outline" type="button" onclick="openRouteInGoogleMaps(${index})" title="Open selected route in Google Maps">
+                        <i class="fas fa-map-marked-alt"></i> Google Maps
+                    </button>
+                    <button class="btn btn-primary" type="button" onclick="selectRoute(${index})">
+                        <i class="fas fa-brain"></i> Predict this route
+                    </button>
+                </div>
+            </div>
+            <div class="vehicle-route">${route.path.join(' → ')}</div>
+            <div class="vehicle-meta" style="margin-top:8px;">
+                <span><i class="fas fa-road"></i> ${(route.total_distance_km || 0)} ${t('km', 'km')}</span>
+                <span><i class="fas fa-clock"></i> ${(route.estimated_time_minutes || 0)} ${t('min', 'min')}</span>
+                <span><i class="fas fa-coins"></i> ₹${(route.estimated_cost_inr || 0).toLocaleString('en-IN')} (${route.cost_per_km_inr || 0}/km · ${route.cost_score ?? 0}/40)</span>
+                <span><i class="fas fa-shield-alt"></i> ${route.route_score ?? 0}/100 score</span>
+            </div>
+            <div style="margin-top:12px;">
+                ${route.segments.map(seg => `
+                    <div class="route-segment">
+                        <div class="route-dot" style="background:${seg.status === 'blocked' ? '#e74c3c' : seg.condition === 'poor' ? '#f39c12' : '#27ae60'}"></div>
+                        <div style="flex:1;">
+                            <div style="font-size:0.85rem; font-weight:600;">${seg.road_name}</div>
+                            <div style="font-size:0.75rem; color:var(--gray);">${seg.road_type || 'highway'} · ${seg.from} → ${seg.to}</div>
+                        </div>
+                        <div style="font-size:0.75rem; color:var(--gray);">${seg.status}</div>
+                    </div>
+                `).join('') || '<div style="color:var(--gray); font-size:0.8rem;">No segment details.</div>'}
+            </div>
+        </div>
+    `).join('');
+}
+
+function selectRoute(index) {
+    const route = latestRoutes[index];
+    if (!route) return;
+
+    sessionStorage.setItem('selectedRoute', JSON.stringify(route));
+    window.location.href = '/predictions';
+}
+
+function openRouteInGoogleMaps(index) {
+    const route = latestRoutes[index];
+    if (!route || !route.path || route.path.length < 2) return;
+
+    const origin = encodeURIComponent(route.path[0]);
+    const destination = encodeURIComponent(route.path[route.path.length - 1]);
+    const waypoints = route.path.slice(1, -1).map(encodeURIComponent).join('|');
+    const waypointQuery = waypoints ? `&waypoints=${waypoints}` : '';
+    window.open(`https://www.google.com/maps/dir/?api=1&origin=${origin}&destination=${destination}&travelmode=driving${waypointQuery}`, '_blank', 'noopener');
+}
+
+async function loadLocationOptions() {
+    const fromSelect = document.getElementById('from-location');
+    const toSelect = document.getElementById('to-location');
+
+    try {
+        const res = await fetch('/api/districts');
+        const districts = await res.json();
+        const options = districts
+            .sort((a, b) => a.name.localeCompare(b.name))
+            .map(district => `<option value="${district.name}">${district.name}, ${district.state}</option>`)
+            .join('');
+
+        fromSelect.innerHTML = options;
+        toSelect.innerHTML = options;
+        fromSelect.disabled = false;
+        toSelect.disabled = false;
+        fromSelect.value = 'Dibrugarh';
+        toSelect.value = 'Imphal';
+        findRoutes();
+    } catch (error) {
+        console.error('Location loading failed:', error);
+        fromSelect.innerHTML = '<option value="">Unable to load locations</option>';
+        toSelect.innerHTML = '<option value="">Unable to load locations</option>';
+    }
+}
+
+loadLocationOptions();
+</script>
+{% endblock %}

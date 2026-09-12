@@ -1,0 +1,409 @@
+{% extends "base.html" %}
+{% block title %}NER Logistics Intelligence Platform - Home{% endblock %}
+{% block page_title %}Dashboard{% endblock %}
+
+{% block content %}
+<div class="stats-grid">
+    <div class="stat-card slide-in">
+        <div class="stat-icon blue"><i class="fas fa-road"></i></div>
+        <div class="stat-info">
+            <h4 id="stat-roads">--</h4>
+            <p data-i18n="open_roads">Open Roads</p>
+            <div class="stat-trend down" id="stat-roads-trend">--</div>
+        </div>
+    </div>
+    <div class="stat-card slide-in" style="animation-delay:0.1s">
+        <div class="stat-icon red"><i class="fas fa-ban"></i></div>
+        <div class="stat-info">
+            <h4 id="stat-blocked">--</h4>
+            <p data-i18n="blocked_roads">Blocked Roads</p>
+            <div class="stat-trend up" id="stat-blocked-trend">--</div>
+        </div>
+    </div>
+    <div class="stat-card slide-in" style="animation-delay:0.2s">
+        <div class="stat-icon green"><i class="fas fa-truck"></i></div>
+        <div class="stat-info">
+            <h4 id="stat-vehicles">--</h4>
+            <p data-i18n="active_vehicles">Active Vehicles</p>
+            <div class="stat-trend down" id="stat-vehicles-trend">--</div>
+        </div>
+    </div>
+    <div class="stat-card slide-in" style="animation-delay:0.3s">
+        <div class="stat-icon orange"><i class="fas fa-clock"></i></div>
+        <div class="stat-info">
+            <h4 id="stat-delayed">--</h4>
+            <p data-i18n="delayed_deliveries">Delayed Deliveries</p>
+            <div class="stat-trend up" id="stat-delayed-trend">--</div>
+        </div>
+    </div>
+    <div class="stat-card slide-in" style="animation-delay:0.4s">
+        <div class="stat-icon purple"><i class="fas fa-exclamation-triangle"></i></div>
+        <div class="stat-info">
+            <h4 id="stat-alerts">--</h4>
+            <p data-i18n="critical_alerts">Critical Alerts</p>
+            <div class="stat-trend up" id="stat-alerts-trend">--</div>
+        </div>
+    </div>
+</div>
+
+<div class="grid-2">
+    <div class="card slide-in map-card">
+        <div class="card-header">
+            <h3><i class="fas fa-map-marked-alt"></i> <span data-i18n="connectivity_status">NER Connectivity Overview</span></h3>
+            <a href="/map" class="btn btn-outline btn-sm" style="padding:6px 12px; font-size:0.8rem;" data-i18n="view_full_map">View Full Map</a>
+        </div>
+        <div class="card-body">
+            <div id="mini-map" class="map-view" style="height:100%;"></div>
+        </div>
+    </div>
+
+    <div class="card slide-in" style="animation-delay:0.1s">
+        <div class="card-header">
+            <h3><i class="fas fa-bell"></i> <span data-i18n="active_alerts">Active Alerts</span></h3>
+        </div>
+        <div class="card-body" id="alerts-container">
+            <div class="loading"><div class="spinner"></div> <span data-i18n="loading_alerts">Loading alerts...</span></div>
+        </div>
+    </div>
+</div>
+
+<div class="grid-2" style="margin-top:20px;">
+    <div class="card slide-in">
+        <div class="card-header">
+            <h3><i class="fas fa-chart-pie"></i> <span data-i18n="district_connectivity_status">District Connectivity Status</span></h3>
+        </div>
+        <div class="card-body">
+            <div id="connectivity-chart" style="display:flex; gap:15px; flex-wrap:wrap;"></div>
+        </div>
+    </div>
+
+    <div class="card slide-in" style="animation-delay:0.1s">
+        <div class="card-header">
+            <h3><i class="fas fa-exclamation-circle"></i> <span data-i18n="top_logistics_bottlenecks">Top Logistics Bottlenecks</span></h3>
+        </div>
+        <div class="card-body" id="bottlenecks-container">
+            <div class="loading"><div class="spinner"></div> <span data-i18n="loading">Loading...</span></div>
+        </div>
+    </div>
+</div>
+
+<div class="grid-2" style="margin-top:20px;">
+    <div class="card slide-in">
+        <div class="card-header">
+            <h3><i class="fas fa-cloud-rain"></i> <span data-i18n="weather_risk_map">Weather Risk Map</span></h3>
+        </div>
+        <div class="card-body">
+            <div id="weather-risk-container"></div>
+        </div>
+    </div>
+
+    <div class="card slide-in" style="animation-delay:0.1s">
+        <div class="card-header">
+            <h3><i class="fas fa-truck-moving"></i> <span data-i18n="essential_supply_tracking">Essential Supply Tracking</span></h3>
+        </div>
+        <div class="card-body" id="supply-tracking">
+            <div class="loading"><div class="spinner"></div> <span data-i18n="loading">Loading...</span></div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+let miniMap;
+
+async function loadDashboard() {
+    try {
+        const res = await fetch('/api/dashboard/summary');
+        const data = await res.json();
+        renderStats(data);
+        renderAlerts(data);
+        renderConnectivity(data.connectivity);
+        renderBottlenecks(data.bottlenecks);
+        renderWeather(data.weather_summary);
+        renderSupplyTracking(data.delivery_status);
+        initMiniMap(data);
+    } catch (e) {
+        console.error('Dashboard load error:', e);
+    }
+}
+
+function renderStats(data) {
+    const conn = data.connectivity;
+    const del = data.delivery_status;
+    const roads = conn.districts.reduce((sum, d) => sum + d.open_roads, 0);
+    const totalRoads = conn.districts.reduce((sum, d) => sum + d.total_roads, 0);
+    const blocked = totalRoads - roads;
+    const t = (key, fallback='') => translations[key] || fallback;
+
+    document.getElementById('stat-roads').textContent = roads;
+    document.getElementById('stat-roads-trend').textContent = `${t('of', 'of')} ${totalRoads} ${t('total', 'total')}`;
+    document.getElementById('stat-blocked').textContent = blocked;
+    document.getElementById('stat-blocked-trend').textContent = `${((blocked/totalRoads)*100).toFixed(1)}% ${t('of', 'of')} ${t('network', 'network')}`;
+    document.getElementById('stat-vehicles').textContent = del.active || 0;
+    document.getElementById('stat-vehicles-trend').textContent = `${t('of', 'of')} ${del.total} ${t('total', 'total')}`;
+    document.getElementById('stat-delayed').textContent = del.delayed || 0;
+    document.getElementById('stat-delayed-trend').textContent = `${((del.delayed/del.total)*100).toFixed(1)}% ${t('delay', 'delayed')}`;
+    document.getElementById('stat-alerts').textContent = data.bottlenecks.filter(b => b.severity === 'critical').length;
+    document.getElementById('stat-alerts-trend').textContent = t('critical_issues', 'Critical issues');
+}
+
+function renderAlerts(data) {
+    const container = document.getElementById('alerts-container');
+    const t = (key, fallback='') => translations[key] || fallback;
+    if (!data.bottlenecks || data.bottlenecks.length === 0) {
+        container.innerHTML = `<p style="color:var(--gray); text-align:center; padding:20px;">${t('no_active_alerts', 'No active alerts')}</p>`;
+        return;
+    }
+    const critical = data.bottlenecks.filter(b => b.severity === 'critical');
+    const wildlife = data.bottlenecks.filter(b => b.type === 'wildlife_crossing');
+    const alerts = [...critical, ...wildlife]
+        .filter((alert, index, all) => all.findIndex(item => item.name === alert.name) === index)
+        .slice(0, 5);
+    container.innerHTML = alerts.map(a => `
+        <div class="alert-item ${a.severity}">
+            <div class="alert-icon"><i class="fas ${getAlertIcon(a.type)}"></i></div>
+            <div class="alert-content">
+                <h4>${a.name}</h4>
+                <p>${a.reason || a.impact}</p>
+                <div class="alert-meta">
+                    <i class="fas fa-map-marker-alt"></i> ${a.location}
+                    ${a.since ? `<span style="margin-left:10px"><i class="fas fa-clock"></i> ${formatTime(a.since)}</span>` : ''}
+                </div>
+            </div>
+        </div>
+    `).join('');
+}
+
+function getAlertIcon(type) {
+    const icons = {
+        'road_block': 'fa-road',
+        'bridge_issue': 'fa-bridge',
+        'delivery_delay': 'fa-truck',
+        'flood': 'fa-water',
+        'landslide': 'fa-mountain',
+        'weather': 'fa-cloud-rain',
+        'traffic': 'fa-car',
+        'wildlife_crossing': 'fa-paw'
+    };
+    return icons[type] || 'fa-exclamation-circle';
+}
+
+function renderConnectivity(conn) {
+    const container = document.getElementById('connectivity-chart');
+    const t = (key, fallback='') => translations[key] || fallback;
+    const districts = conn.districts.slice(0, 8);
+    container.innerHTML = districts.map(d => {
+        const pct = d.connectivity_percentage;
+        let color = 'success';
+        if (pct < 50) color = 'danger';
+        else if (pct < 80) color = 'warning';
+        return `
+            <div style="flex:1; min-width:200px;">
+                <div style="display:flex; justify-content:space-between; margin-bottom:4px;">
+                    <span style="font-size:0.85rem; font-weight:600;">${d.name}</span>
+                    <span style="font-size:0.8rem; color:var(--gray);">${pct}%</span>
+                </div>
+                <div class="progress">
+                    <div class="progress-bar ${color}" style="width:${pct}%"></div>
+                </div>
+                <div style="font-size:0.75rem; color:var(--gray); margin-top:2px;">
+                    ${d.open_roads}/${d.total_roads} ${t('roads_open', 'roads open')}
+                </div>
+            </div>
+        `;
+    }).join('');
+}
+
+function renderBottlenecks(bottlenecks) {
+    const container = document.getElementById('bottlenecks-container');
+    const wildlife = bottlenecks.find(b => b.type === 'wildlife_crossing');
+    const top = bottlenecks.filter(b => b.type !== 'wildlife_crossing').slice(0, wildlife ? 4 : 5);
+    if (wildlife) top.push(wildlife);
+    container.innerHTML = top.map(b => `
+        <div class="alert-item ${b.severity}">
+            <div class="alert-icon"><i class="fas ${getAlertIcon(b.type)}"></i></div>
+            <div class="alert-content">
+                <h4>${b.name}</h4>
+                <p>${b.impact}${b.type === 'wildlife_crossing' ? ' - Slow down and watch for animals.' : ''}</p>
+                <div class="alert-meta">
+                    <span class="badge badge-${b.severity === 'critical' ? 'danger' : b.severity === 'high' ? 'warning' : 'info'}">${b.severity.toUpperCase()}</span>
+                    <span style="margin-left:8px"><i class="fas fa-map-marker-alt"></i> ${b.location}</span>
+                </div>
+            </div>
+        </div>
+    `).join('');
+}
+
+function renderWeather(weather) {
+    const container = document.getElementById('weather-risk-container');
+    const t = (key, fallback='') => translations[key] || fallback;
+    if (!weather || !weather.locations) {
+        container.innerHTML = `<p style="color:var(--gray);">${t('no_weather_data', 'No weather data')}</p>`;
+        return;
+    }
+
+    const normalizeRisk = (w) => {
+        const level = String(w.risk_level || 'low').toLowerCase();
+        if (level === 'critical') return { label: t('critical', 'CRITICAL').toUpperCase(), className: 'danger', percent: Number(w.risk_score || 90) };
+        if (level === 'high_risk' || level === 'high') return { label: t('high', 'HIGH').toUpperCase(), className: 'warning', percent: Number(w.risk_score || 75) };
+        if (level === 'moderate' || level === 'warning' || level === 'medium') return { label: t('moderate', 'MODERATE').toUpperCase(), className: 'warning', percent: Number(w.risk_score || 50) };
+        return { label: t('low', 'LOW').toUpperCase(), className: 'success', percent: Number(w.risk_score || 20) };
+    };
+
+    const riskRank = { critical: 4, high_risk: 3, high: 3, moderate: 2, warning: 2, medium: 2, low: 1 };
+    const locations = [...weather.locations]
+        .sort((a, b) => {
+            const rankDifference = (riskRank[String(b.risk_level || 'low').toLowerCase()] || 1) -
+                (riskRank[String(a.risk_level || 'low').toLowerCase()] || 1);
+            return rankDifference || Number(b.risk_score || 0) - Number(a.risk_score || 0);
+        })
+        .slice(0, 5);
+
+    if (!locations.length) {
+        container.innerHTML = `<p style="color:var(--gray);">${t('no_weather_data', 'No weather data')}</p>`;
+        return;
+    }
+
+    container.innerHTML = locations.map(w => {
+        const risk = normalizeRisk(w);
+        const percent = Math.min(Math.max(Number(w.risk_score || risk.percent || 0), 0), 100);
+
+        return `
+        <div style="display:flex; align-items:center; gap:12px; padding:10px 0; border-bottom:1px solid var(--border-lighter);">
+            <div style="font-size:1.3rem;">${getWeatherIcon(w.weather_condition)}</div>
+            <div style="flex:1;">
+                <div style="font-weight:600; font-size:0.9rem;">${w.location}</div>
+                <div style="font-size:0.8rem; color:var(--gray);">
+                    ${w.rainfall_mm}mm rain | ${w.temperature}C | Flood: ${w.flood_risk} | Landslide: ${w.landslide_risk}
+                </div>
+            </div>
+            <span class="badge badge-${risk.className}">${risk.label}</span>
+            <div class="risk-meter" style="width:70px; margin-left:8px;">
+                <div class="risk-fill ${risk.className === 'danger' ? 'critical' : risk.className === 'warning' ? 'medium' : 'low'}" style="width:${percent}%"></div>
+            </div>
+        </div>
+    `;
+    }).join('');
+}
+
+function getWeatherIcon(condition) {
+    const icons = {
+        'clear': '&#9728;',
+        'light_rain': '&#127782;',
+        'moderate_rain': '&#127783;',
+        'heavy_rain': '&#127784;',
+        'torrential': '&#127784;',
+        'snow_rain': '&#127784;'
+    };
+    return icons[condition] || '&#9728;';
+}
+
+function renderSupplyTracking(deliveries) {
+    const container = document.getElementById('supply-tracking');
+    const t = (key, fallback='') => translations[key] || fallback;
+    const vehicles = (deliveries.vehicles || []).slice(0, 5);
+    container.innerHTML = vehicles.map(v => `
+        <div style="display:flex; align-items:center; gap:12px; padding:12px 0; border-bottom:1px solid var(--border-lighter);">
+            <div style="width:40px; height:40px; border-radius:50%; background:${v.status === 'active' ? 'rgba(39,174,96,0.1)' : 'rgba(231,76,60,0.1)'}; display:flex; align-items:center; justify-content:center;">
+                <i class="fas fa-truck" style="color:${v.status === 'active' ? 'var(--secondary)' : 'var(--danger)'}"></i>
+            </div>
+            <div style="flex:1;">
+                <div style="font-weight:600; font-size:0.9rem;">${v.vehicle_number}</div>
+                <div style="font-size:0.8rem; color:var(--gray);">${v.cargo_type}: ${v.cargo_description}</div>
+                <div style="font-size:0.75rem; color:var(--gray);">
+                    <i class="fas fa-map-marker-alt"></i> ${v.origin} <i class="fas fa-arrow-right" style="margin:0 6px;"></i> ${v.destination}
+                </div>
+            </div>
+            <div style="text-align:right;">
+                <span class="badge badge-${v.status === 'active' ? 'success' : 'danger'}">${v.status.toUpperCase()}</span>
+                <div style="font-size:0.75rem; color:var(--gray); margin-top:4px;">
+                    ${v.delay_minutes > 0 ? `+${v.delay_minutes}m ${t('delay', 'delay')}` : t('on_time', 'On time')}
+                </div>
+            </div>
+        </div>
+    `).join('');
+}
+
+function hasValidLatLng(lat, lng) {
+    const latNum = Number(lat);
+    const lngNum = Number(lng);
+    const valid = Number.isFinite(latNum) && Number.isFinite(lngNum) &&
+        latNum >= -90 && latNum <= 90 && lngNum >= -180 && lngNum <= 180;
+    return valid;
+}
+
+function initMiniMap(data) {
+    miniMap = L.map('mini-map').setView([25.5, 92.5], 6);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '&copy; OpenStreetMap'
+    }).addTo(miniMap);
+    setTimeout(() => miniMap.invalidateSize(), 0);
+
+    // Add districts
+    if (data.connectivity && Array.isArray(data.connectivity.districts)) {
+        data.connectivity.districts.forEach(d => {
+            const lat = d.lat ?? d.latitude ?? d.location_lat;
+            const lng = d.lng ?? d.longitude ?? d.location_lng;
+
+            if (!hasValidLatLng(lat, lng)) {
+                console.warn('Skipping district missing valid coordinates in mini map:', d);
+                return;
+            }
+
+            let color = '#27ae60';
+            if (d.status === 'warning') color = '#f39c12';
+            if (d.status === 'critical') color = '#e74c3c';
+            L.circleMarker([Number(lat), Number(lng)], {
+                radius: 8,
+                fillColor: color,
+                color: '#fff',
+                weight: 2,
+                opacity: 1,
+                fillOpacity: 0.8
+            }).bindPopup(`<b>${d.name}</b><br>${d.state}<br>Roads: ${d.open_roads}/${d.total_roads}`).addTo(miniMap);
+        });
+    }
+
+    // Add blocked roads
+    if (data.bottlenecks) {
+        data.bottlenecks.filter(b => b.type === 'road_block').forEach(b => {
+            // Approximate - use first lat/lng available
+        });
+    }
+
+    // Add vehicles
+    if (data.delivery_status && data.delivery_status.vehicles) {
+        data.delivery_status.vehicles.forEach(v => {
+            const lat = v.current_position ? (v.current_position.lat ?? v.current_position.latitude) : (v.lat ?? v.latitude);
+            const lng = v.current_position ? (v.current_position.lng ?? v.current_position.longitude) : (v.lng ?? v.longitude);
+
+            if (!hasValidLatLng(lat, lng)) {
+                console.warn('Skipping vehicle missing valid coordinates in mini map:', v);
+                return;
+            }
+
+            const icon = L.divIcon({
+                className: 'vehicle-marker',
+                html: `<div style="background:${v.status === 'active' ? '#27ae60' : '#e74c3c'}; width:12px; height:12px; border-radius:50%; border:2px solid white; box-shadow:0 2px 4px rgba(0,0,0,0.3);"></div>`,
+                iconSize: [12, 12]
+            });
+            L.marker([Number(lat), Number(lng)], { icon }).bindPopup(
+                `<b>${v.vehicle_number}</b><br>${v.cargo_type}<br>${v.status}`
+            ).addTo(miniMap);
+        });
+    }
+}
+
+function formatTime(iso) {
+    const d = new Date(iso);
+    const now = new Date();
+    const diff = Math.floor((now - d) / 60000);
+    if (diff < 60) return `${diff}m ago`;
+    if (diff < 1440) return `${Math.floor(diff/60)}h ago`;
+    return `${Math.floor(diff/1440)}d ago`;
+}
+
+loadDashboard();
+</script>
+{% endblock %}

@@ -1,0 +1,244 @@
+{% extends "base.html" %}
+{% block title %}NER Logistics Intelligence Platform - Vehicle Tracking{% endblock %}
+{% block page_title %}Vehicle Tracking{% endblock %}
+
+{% block content %}
+<div class="stats-grid">
+    <div class="stat-card slide-in">
+        <div class="stat-icon green"><i class="fas fa-truck"></i></div>
+        <div class="stat-info">
+            <h4 id="total-vehicles">--</h4>
+            <p>Total Fleet</p>
+            <div class="stat-trend down" id="fleet-trend">--</div>
+        </div>
+    </div>
+
+    <div class="stat-card slide-in" style="animation-delay:0.1s">
+        <div class="stat-icon blue"><i class="fas fa-route"></i></div>
+        <div class="stat-info">
+            <h4 id="active-vehicles">--</h4>
+            <p>Active Vehicles</p>
+            <div class="stat-trend down" id="active-trend">--</div>
+        </div>
+    </div>
+
+    <div class="stat-card slide-in" style="animation-delay:0.2s">
+        <div class="stat-icon orange"><i class="fas fa-clock"></i></div>
+        <div class="stat-info">
+            <h4 id="delayed-vehicles">--</h4>
+            <p>Delayed</p>
+            <div class="stat-trend up" id="delayed-trend">--</div>
+        </div>
+    </div>
+
+    <div class="stat-card slide-in" style="animation-delay:0.3s">
+        <div class="stat-icon red"><i class="fas fa-ban"></i></div>
+        <div class="stat-info">
+            <h4 id="offline-vehicles">--</h4>
+            <p>Inactive</p>
+            <div class="stat-trend up" id="offline-trend">--</div>
+        </div>
+    </div>
+</div>
+
+<div class="grid-2">
+    <div class="card slide-in map-card">
+        <div class="card-header">
+            <h3><i class="fas fa-map"></i> Live Vehicle Map</h3>
+        </div>
+        <div class="card-body">
+            <div id="vehicle-map" class="map-view" style="height:100%;"></div>
+        </div>
+    </div>
+
+    <div class="card slide-in" style="animation-delay:0.1s">
+        <div class="card-header">
+            <h3><i class="fas fa-truck-moving"></i> Current Route Summary</h3>
+        </div>
+        <div class="card-body" id="route-summary">
+            <div class="loading"><div class="spinner"></div>Loading route summary...</div>
+        </div>
+    </div>
+</div>
+
+<div class="card slide-in" style="margin-top:20px;">
+    <div class="card-header">
+        <h3><i class="fas fa-table"></i> Fleet Overview</h3>
+        <div class="filters">
+            <select class="filter-select" id="vehicle-status-filter">
+                <option value="all">All Status</option>
+                <option value="active">Active</option>
+                <option value="delayed">Delayed</option>
+                <option value="idle">Idle</option>
+                <option value="offline">Offline</option>
+            </select>
+        </div>
+    </div>
+    <div class="card-body">
+        <div style="overflow-x:auto;">
+            <table class="data-table" id="vehicles-table">
+                <thead>
+                    <tr>
+                        <th>Vehicle</th>
+                        <th>Type</th>
+                        <th>Route</th>
+                        <th>Status</th>
+                        <th>Speed</th>
+                        <th>ETA</th>
+                        <th>Last Update</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr><td colspan="7" style="text-align:center; color:var(--gray);">Loading vehicle data...</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+let vehicleMap;
+let vehicleData = [];
+
+async function loadVehicles() {
+    try {
+        const res = await fetch('/api/vehicles');
+        vehicleData = await res.json();
+        initVehicleMap();
+        renderSummary();
+        renderRouteSummary();
+        renderVehicleTable();
+    } catch (error) {
+        console.error('Vehicle load failed:', error);
+        document.getElementById('route-summary').innerHTML = '<p style="color:var(--gray);">Unable to load vehicle data.</p>';
+    }
+}
+
+function initVehicleMap() {
+    if (vehicleMap) {
+        vehicleMap.remove();
+    }
+
+    vehicleMap = L.map('vehicle-map').setView([25.5, 92.5], 6);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '&copy; OpenStreetMap contributors'
+    }).addTo(vehicleMap);
+    setTimeout(() => vehicleMap.invalidateSize(), 0);
+
+    vehicleData.forEach(v => {
+        if (!v.current_lat || !v.current_lng) return;
+
+        const color = v.status === 'active' ? '#27ae60' : v.status === 'delayed' ? '#f39c12' : v.status === 'offline' ? '#e74c3c' : '#3498db';
+        const marker = L.circleMarker([v.current_lat, v.current_lng], {
+            radius: 9,
+            color: '#fff',
+            weight: 2,
+            fillColor: color,
+            fillOpacity: 0.9
+        }).bindPopup(`
+            <strong>${v.vehicle_number}</strong><br>
+            ${v.cargo_type || 'General'} cargo<br>
+            Route: ${v.origin || 'Origin'} → ${v.destination || 'Destination'}<br>
+            Status: ${v.status}
+        `);
+
+        marker.addTo(vehicleMap);
+    });
+}
+
+function renderSummary() {
+    const total = vehicleData.length;
+    const active = vehicleData.filter(v => String(v.status).toLowerCase() === 'active').length;
+    const delayed = vehicleData.filter(v => String(v.status).toLowerCase() === 'delayed').length;
+    const inactive = total - active - delayed;
+
+    document.getElementById('total-vehicles').textContent = total;
+    document.getElementById('fleet-trend').textContent = `${active} on route`;
+
+    document.getElementById('active-vehicles').textContent = active;
+    document.getElementById('active-trend').textContent = `${Math.round((active / Math.max(total, 1)) * 100)}% active`;
+
+    document.getElementById('delayed-vehicles').textContent = delayed;
+    document.getElementById('delayed-trend').textContent = `${Math.round((delayed / Math.max(total, 1)) * 100)}% delayed`;
+
+    document.getElementById('offline-vehicles').textContent = inactive;
+    document.getElementById('offline-trend').textContent = `${Math.round((inactive / Math.max(total, 1)) * 100)}% inactive`;
+}
+
+function renderVehicleTable() {
+    const filter = document.getElementById('vehicle-status-filter');
+    const selected = filter ? filter.value : 'all';
+    const rows = vehicleData.filter(v => {
+        if (selected === 'all') return true;
+        return String(v.status).toLowerCase() === selected;
+    });
+
+    const tbody = document.querySelector('#vehicles-table tbody');
+    if (!tbody) return;
+
+    if (!rows.length) {
+        tbody.innerHTML = '<tr><td colspan="7" style="text-align:center; color:var(--gray);">No vehicles match the selected filter.</td></tr>';
+        return;
+    }
+
+    tbody.innerHTML = rows.map(v => {
+        const status = String(v.status || 'unknown').toLowerCase();
+        const statusClass = status === 'active' ? 'success' : status === 'delayed' ? 'warning' : status === 'offline' ? 'danger' : 'info';
+
+        return `
+            <tr>
+                <td><strong>${v.vehicle_number}</strong></td>
+                <td>${v.vehicle_type || 'Truck'}</td>
+                <td>${v.origin || 'Origin'} → ${v.destination || 'Destination'}</td>
+                <td><span class="badge badge-${statusClass}">${(v.status || 'unknown').toUpperCase()}</span></td>
+                <td>${v.speed_kmh || 0} km/h</td>
+                <td>${v.eta ? formatDate(v.eta) : 'Pending'}</td>
+                <td>${v.last_update ? formatDate(v.last_update) : 'N/A'}</td>
+            </tr>
+        `;
+    }).join('');
+}
+
+function formatDate(value) {
+    if (!value) return 'N/A';
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return value;
+    return date.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
+}
+
+function renderRouteSummary() {
+    const container = document.getElementById('route-summary');
+    const summary = vehicleData.slice(0, 4);
+
+    if (!summary.length) {
+        container.innerHTML = '<p style="color:var(--gray);">No active routes.</p>';
+        return;
+    }
+
+    container.innerHTML = summary.map(v => `
+        <div class="vehicle-card" style="margin-bottom:12px;">
+            <div class="vehicle-header">
+                <div class="vehicle-number">${v.vehicle_number}</div>
+                <span class="badge badge-${String(v.status || 'unknown').toLowerCase() === 'active' ? 'success' : String(v.status || 'unknown').toLowerCase() === 'delayed' ? 'warning' : 'danger'}">
+                    ${(v.status || 'unknown').toUpperCase()}
+                </span>
+            </div>
+            <div class="vehicle-route">${v.origin || 'Origin'} → ${v.destination || 'Destination'}</div>
+            <div class="vehicle-meta">
+                <span><i class="fas fa-clock"></i> ETA: ${v.eta ? formatDate(v.eta) : 'Pending'}</span>
+                <span><i class="fas fa-tachometer-alt"></i> ${v.speed_kmh || 0} km/h</span>
+            </div>
+        </div>
+    `).join('');
+}
+
+const filterSelect = document.getElementById('vehicle-status-filter');
+if (filterSelect) {
+    filterSelect.addEventListener('change', renderVehicleTable);
+}
+
+loadVehicles();
+</script>
+{% endblock %}

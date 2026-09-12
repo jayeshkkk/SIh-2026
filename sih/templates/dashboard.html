@@ -1,0 +1,322 @@
+{% extends "base.html" %}
+{% block title %}NER Logistics Intelligence Platform - Analytics{% endblock %}
+{% block page_title %}Analytics Dashboard{% endblock %}
+
+{% block content %}
+<div class="stats-grid">
+    <div class="stat-card slide-in">
+        <div class="stat-icon blue"><i class="fas fa-road"></i></div>
+        <div class="stat-info">
+            <h4 id="summary-open-roads">--</h4>
+            <p>Open Roads</p>
+            <div class="stat-trend down" id="summary-open-roads-trend">--</div>
+        </div>
+    </div>
+
+    <div class="stat-card slide-in" style="animation-delay:0.1s">
+        <div class="stat-icon red"><i class="fas fa-ban"></i></div>
+        <div class="stat-info">
+            <h4 id="summary-blocked-roads">--</h4>
+            <p>Blocked Roads</p>
+            <div class="stat-trend up" id="summary-blocked-roads-trend">--</div>
+        </div>
+    </div>
+
+    <div class="stat-card slide-in" style="animation-delay:0.2s">
+        <div class="stat-icon green"><i class="fas fa-truck"></i></div>
+        <div class="stat-info">
+            <h4 id="summary-active-vehicles">--</h4>
+            <p>Active Vehicles</p>
+            <div class="stat-trend down" id="summary-active-vehicles-trend">--</div>
+        </div>
+    </div>
+
+    <div class="stat-card slide-in" style="animation-delay:0.3s">
+        <div class="stat-icon orange"><i class="fas fa-clock"></i></div>
+        <div class="stat-info">
+            <h4 id="summary-delayed-deliveries">--</h4>
+            <p>Delayed Deliveries</p>
+            <div class="stat-trend up" id="summary-delayed-deliveries-trend">--</div>
+        </div>
+    </div>
+
+    <div class="stat-card slide-in" style="animation-delay:0.4s">
+        <div class="stat-icon purple"><i class="fas fa-exclamation-triangle"></i></div>
+        <div class="stat-info">
+            <h4 id="summary-critical-alerts">--</h4>
+            <p>Critical Alerts</p>
+            <div class="stat-trend up" id="summary-critical-alerts-trend">--</div>
+        </div>
+    </div>
+</div>
+
+<div class="grid-2">
+    <div class="card slide-in">
+        <div class="card-header">
+            <h3><i class="fas fa-chart-pie"></i> District Connectivity Overview</h3>
+        </div>
+        <div class="card-body">
+            <div id="district-connectivity-list"></div>
+        </div>
+    </div>
+
+    <div class="card slide-in" style="animation-delay:0.1s">
+        <div class="card-header">
+            <h3><i class="fas fa-route"></i> Emergency Accessibility Routes</h3>
+        </div>
+        <div class="card-body" id="emergency-routes-container">
+            <div class="loading"><div class="spinner"></div>Loading routes...</div>
+        </div>
+    </div>
+</div>
+
+<div class="grid-2" style="margin-top:20px;">
+    <div class="card slide-in">
+        <div class="card-header">
+            <h3><i class="fas fa-cloud-rain"></i> Weather Risk Monitor</h3>
+        </div>
+        <div class="card-body" id="weather-risk-container">
+            <div class="loading"><div class="spinner"></div>Loading weather risk...</div>
+        </div>
+    </div>
+
+    <div class="card slide-in" style="animation-delay:0.1s">
+        <div class="card-header">
+            <h3><i class="fas fa-brain"></i> AI Disruption Forecast</h3>
+        </div>
+        <div class="card-body" id="disruption-forecast-container">
+            <div class="loading"><div class="spinner"></div>Loading forecast...</div>
+        </div>
+    </div>
+</div>
+
+<div class="card slide-in" style="margin-top:20px;">
+    <div class="card-header">
+        <h3><i class="fas fa-table"></i> District Detail Table</h3>
+    </div>
+    <div class="card-body">
+        <div style="overflow-x:auto;">
+            <table class="data-table" id="district-detail-table">
+                <thead>
+                    <tr>
+                        <th>District</th>
+                        <th>State</th>
+                        <th>Roads</th>
+                        <th>Open</th>
+                        <th>Connectivity</th>
+                        <th>Status</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr><td colspan="6" style="text-align:center; color:var(--gray);">Loading district data...</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+async function loadDashboardAnalytics() {
+    try {
+        const [summaryRes, emergencyRes] = await Promise.all([
+            fetch('/api/dashboard/summary'),
+            fetch('/api/dashboard/emergency-routes')
+        ]);
+
+        const summary = await summaryRes.json();
+        const emergency = await emergencyRes.json();
+
+        renderSummary(summary);
+        renderDistrictConnectivity(summary.connectivity);
+        renderDistrictDetail(summary.connectivity);
+        renderWeatherSummary(summary.weather_summary);
+        renderEmergencyRoutes(emergency);
+        renderDisruptionForecast(summary);
+    } catch (error) {
+        console.error('Dashboard analytics load failed:', error);
+        document.getElementById('district-connectivity-list').innerHTML = '<p style="color:var(--gray);">Unable to load analytics.</p>';
+    }
+}
+
+function renderSummary(data) {
+    const connectivity = data.connectivity || {};
+    const districts = connectivity.districts || [];
+    const totalRoads = districts.reduce((sum, d) => sum + (d.total_roads || 0), 0);
+    const openRoads = districts.reduce((sum, d) => sum + (d.open_roads || 0), 0);
+    const blockedRoads = Math.max(totalRoads - openRoads, 0);
+    const delivery = data.delivery_status || {};
+    const totalDeliveries = delivery.total || 0;
+    const activeVehicles = delivery.active || 0;
+    const delayed = delivery.delayed || 0;
+    const criticalAlerts = (data.bottlenecks || []).filter(b => (b.severity || '').toLowerCase() === 'critical').length;
+
+    document.getElementById('summary-open-roads').textContent = openRoads;
+    document.getElementById('summary-open-roads-trend').textContent = `${totalRoads} total routes`;
+
+    document.getElementById('summary-blocked-roads').textContent = blockedRoads;
+    document.getElementById('summary-blocked-roads-trend').textContent = `${((blockedRoads / Math.max(totalRoads, 1)) * 100).toFixed(1)}% disrupted`;
+
+    document.getElementById('summary-active-vehicles').textContent = activeVehicles;
+    document.getElementById('summary-active-vehicles-trend').textContent = `${totalDeliveries} total vehicles`;
+
+    document.getElementById('summary-delayed-deliveries').textContent = delayed;
+    document.getElementById('summary-delayed-deliveries-trend').textContent = `${((delayed / Math.max(totalDeliveries, 1)) * 100).toFixed(1)}% delayed`;
+
+    document.getElementById('summary-critical-alerts').textContent = criticalAlerts;
+    document.getElementById('summary-critical-alerts-trend').textContent = 'Priority review';
+}
+
+function renderDistrictConnectivity(data) {
+    const container = document.getElementById('district-connectivity-list');
+    const districts = (data && data.districts) ? data.districts : [];
+
+    container.innerHTML = districts.map(d => {
+        let statusClass = 'success';
+        if ((d.connectivity_percentage || 0) < 50) statusClass = 'danger';
+        else if ((d.connectivity_percentage || 0) < 80) statusClass = 'warning';
+
+        return `
+            <div style="padding:12px 0; border-bottom:1px solid var(--border-lighter);">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+                    <strong>${d.name}</strong>
+                    <span class="badge badge-${statusClass === 'success' ? 'success' : statusClass === 'warning' ? 'warning' : 'danger'}">${d.status || 'stable'}</span>
+                </div>
+                <div class="progress">
+                    <div class="progress-bar ${statusClass}" style="width:${d.connectivity_percentage || 0}%"></div>
+                </div>
+                <div style="display:flex; justify-content:space-between; margin-top:6px; font-size:0.8rem; color:var(--gray);">
+                    <span>${d.open_roads || 0}/${d.total_roads || 0} roads open</span>
+                    <span>${d.connectivity_percentage || 0}%</span>
+                </div>
+            </div>
+        `;
+    }).join('');
+}
+
+function renderDistrictDetail(data) {
+    const body = document.querySelector('#district-detail-table tbody');
+    const districts = (data && data.districts) ? data.districts : [];
+
+    if (!districts.length) {
+        body.innerHTML = '<tr><td colspan="6" style="text-align:center; color:var(--gray);">No district data available.</td></tr>';
+        return;
+    }
+
+    body.innerHTML = districts.map(d => {
+        const pct = d.connectivity_percentage || 0;
+        let badgeClass = 'badge-success';
+        let statusText = 'Stable';
+        if (pct < 50) { badgeClass = 'badge-danger'; statusText = 'Critical'; }
+        else if (pct < 80) { badgeClass = 'badge-warning'; statusText = 'Warning'; }
+
+        return `
+            <tr>
+                <td>${d.name}</td>
+                <td>${d.state || 'N/A'}</td>
+                <td>${d.total_roads || 0}</td>
+                <td>${d.open_roads || 0}</td>
+                <td>
+                    <div style="display:flex; align-items:center; gap:8px; min-width:160px;">
+                        <div class="progress" style="flex:1; min-width:90px;">
+                            <div class="progress-bar ${pct < 50 ? 'danger' : pct < 80 ? 'warning' : 'success'}" style="width:${pct}%"></div>
+                        </div>
+                        <span style="font-size:0.8rem; color:var(--gray);">${pct}%</span>
+                    </div>
+                </td>
+                <td><span class="badge ${badgeClass}">${statusText}</span></td>
+            </tr>
+        `;
+    }).join('');
+}
+
+function renderWeatherSummary(data) {
+    const container = document.getElementById('weather-risk-container');
+    const locations = (data && data.locations) ? data.locations : [];
+
+    if (!locations.length) {
+        container.innerHTML = '<p style="color:var(--gray);">No weather risk data available.</p>';
+        return;
+    }
+
+    const normalizeRisk = (item) => {
+        const normalized = (item.risk_level || item.level || 'low').toLowerCase();
+        if (normalized === 'critical') return { label: 'CRITICAL', className: 'critical', percent: Number(item.risk_score || 90) };
+        if (normalized === 'high_risk' || normalized === 'high') return { label: 'HIGH RISK', className: 'critical', percent: Number(item.risk_score || 75) };
+        if (normalized === 'moderate' || normalized === 'warning' || normalized === 'medium') return { label: 'MODERATE', className: 'medium', percent: Number(item.risk_score || 50) };
+        return { label: 'LOW', className: 'low', percent: Number(item.risk_score || 20) };
+    };
+
+    container.innerHTML = locations.slice(0, 5).map(w => {
+        const risk = normalizeRisk(w);
+        const percent = Math.min(Math.max(Number(w.risk_score || risk.percent || 0), 0), 100);
+
+        return `
+            <div style="padding:10px 0; border-bottom:1px solid var(--border-lighter);">
+                <div style="display:flex; justify-content:space-between; align-items:center; gap:10px;">
+                    <div>
+                        <strong>${w.location}</strong>
+                        <div style="font-size:0.8rem; color:var(--gray);">${w.weather_condition || 'Weather'} • ${w.temperature || '--'}°C</div>
+                    </div>
+                    <span class="badge badge-${risk.className === 'critical' ? 'danger' : risk.className === 'medium' ? 'warning' : 'success'}">${risk.label}</span>
+                </div>
+                <div class="risk-meter">
+                    <div class="risk-fill ${risk.className}" style="width:${percent}%"></div>
+                </div>
+                <div style="font-size:0.75rem; color:var(--gray); margin-top:6px;">
+                    Rainfall: ${w.rainfall_mm || 0}mm • Flood: ${w.flood_risk || 'low'} • Landslide: ${w.landslide_risk || 'low'}
+                </div>
+            </div>
+        `;
+    }).join('');
+}
+
+function renderEmergencyRoutes(data) {
+    const container = document.getElementById('emergency-routes-container');
+    const routes = Array.isArray(data) ? data : (data && data.routes) ? data.routes : [];
+
+    if (!routes.length) {
+        container.innerHTML = '<p style="color:var(--gray);">No emergency route data available.</p>';
+        return;
+    }
+
+    container.innerHTML = routes.slice(0, 5).map(route => `
+        <div class="alert-item ${route.priority === 'critical' ? 'critical' : route.priority === 'high' ? 'high' : 'medium'}">
+            <div class="alert-icon"><i class="fas ${route.priority === 'critical' ? 'fa-ambulance' : 'fa-route'}"></i></div>
+            <div class="alert-content">
+                <h4>${route.name || route.route_name || 'Emergency Route'}</h4>
+                <p>${route.from || 'Start'} → ${route.to || 'Destination'}</p>
+                <div class="alert-meta">
+                    <span class="badge badge-${route.priority === 'critical' ? 'danger' : route.priority === 'high' ? 'warning' : 'info'}">${(route.priority || 'normal').toUpperCase()}</span>
+                    <span style="margin-left:8px;"><i class="fas fa-clock"></i> ${route.eta || 'ETA pending'}</span>
+                </div>
+            </div>
+        </div>
+    `).join('');
+}
+
+function renderDisruptionForecast(data) {
+    const container = document.getElementById('disruption-forecast-container');
+    const predictions = (data && data.bottlenecks) ? data.bottlenecks.slice(0, 4) : [];
+
+    if (!predictions.length) {
+        container.innerHTML = '<p style="color:var(--gray);">No disruption forecast available.</p>';
+        return;
+    }
+
+    container.innerHTML = predictions.map(item => `
+        <div style="padding:12px 0; border-bottom:1px solid var(--border-lighter);">
+            <div style="display:flex; justify-content:space-between; align-items:center; gap:10px;">
+                <strong>${item.name}</strong>
+                <span class="badge badge-${item.severity === 'critical' ? 'danger' : item.severity === 'high' ? 'warning' : 'info'}">${(item.severity || 'medium').toUpperCase()}</span>
+            </div>
+            <div style="font-size:0.82rem; color:var(--gray); margin-top:4px;">${item.location}</div>
+            <div style="font-size:0.8rem; color:var(--gray); margin-top:4px;">${item.impact || item.reason || 'Operational impact noted.'}</div>
+        </div>
+    `).join('');
+}
+
+loadDashboardAnalytics();
+</script>
+{% endblock %}

@@ -1,0 +1,1290 @@
+================================================================================
+                       CODE WORKING FLOWCHART
+        NER Logistics Accessibility Intelligence Platform - AI Engine
+================================================================================
+
+OVERVIEW: The AI engine processes route planning in 7 sequential steps
+
+
+================================================================================
+                            STEP 1: INITIALIZATION
+================================================================================
+
+INPUT DATA SOURCES & DATA ORIGIN:
+┌─────────────────────────────────────────────────────────────────┐
+│                                                                 │
+│  DATABASE SOURCES (Primary Data):                              │
+│  ┌────────────────────────────────────────────────────────┐    │
+│  │ Source: PostgreSQL/SQLite Database (models.py)         │    │
+│  │ Connection: SQLAlchemy ORM                             │    │
+│  │                                                        │    │
+│  │ • RoadSegment Table:                                   │    │
+│  │   - Data Entry: Admin Dashboard / import_highways.py   │    │
+│  │   - Columns: id, name, from_location, to_location,     │    │
+│  │            from_lat, from_lng, to_lat, to_lng,         │    │
+│  │            road_type, length_km, status, condition,    │    │
+│  │            terrain_type, traffic_level                 │    │
+│  │                                                        │    │
+│  │ • WeatherData Table:                                   │    │
+│  │   - Data Entry: External Weather API / Scheduled Jobs  │    │
+│  │   - API Sources: OpenWeatherMap, NOAA, IMD, etc.       │    │
+│  │   - Columns: id, district_id, rainfall_mm,             │    │
+│  │            temperature, humidity, weather_condition,   │    │
+│  │            recorded_at (timestamp)                     │    │
+│  │   - Update Frequency: Real-time (every 1-6 hours)      │    │
+│  │                                                        │    │
+│  │ • Bridge Table:                                        │    │
+│  │   - Data Entry: Manual field reports / Admin updates   │    │
+│  │   - Columns: id, name, district_id, status,            │    │
+│  │            condition, built_date, inspection_date      │    │
+│  │   - Status Values: open, partial, closed               │    │
+│  │                                                        │    │
+│  │ • Alert Table:                                         │    │
+│  │   - Data Entry: Field reports / System auto-triggers   │    │
+│  │   - Columns: id, affected_districts, alert_type,       │    │
+│  │            severity, description, created_at           │    │
+│  │   - Types: flooding, landslide, accident, closure      │    │
+│  │   - Lookback: 7-day historical window                  │    │
+│  │                                                        │    │
+│  │ • Vehicle Table:                                       │    │
+│  │   - Data Entry: System configuration (seed_data.py)    │    │
+│  │   - Columns: id, vehicle_type, capacity_tons,           │    │
+│  │            base_price_min, base_price_max              │    │
+│  │   - Types: small_pickup, light_commercial,             │    │
+│  │           medium_heavy, large_container                │    │
+│  │                                                        │    │
+│  │ • District Table:                                      │    │
+│  │   - Data Entry: Initial seed data (seed_data.py)       │    │
+│  │   - Columns: id, name, lat, lng, state, region         │    │
+│  │   - Fixed Reference Data                               │    │
+│  │                                                        │    │
+│  └────────────────────────────────────────────────────────┘    │
+│                                                                 │
+│  CONFIGURATION SOURCES (Constants):                            │
+│  ┌────────────────────────────────────────────────────────┐    │
+│  │ Source: Code hardcoded in ai_engine.py                 │    │
+│  │                                                        │    │
+│  │ • Risk Weights Vector:                                 │    │
+│  │   self.risk_weights = {                                │    │
+│  │     'rainfall': 0.25,       ← Defined in __init__     │    │
+│  │     'terrain': 0.20,                                   │    │
+│  │     'road_condition': 0.20,                            │    │
+│  │     'traffic': 0.10,                                   │    │
+│  │     'bridge_status': 0.15,                             │    │
+│  │     'historical': 0.10                                 │    │
+│  │   }                                                    │    │
+│  │                                                        │    │
+│  │ • SHIPMENT_PRICING Constants:                          │    │
+│  │   AIR_COST_MULTIPLIER = 3.5                            │    │
+│  │   SHIPMENT_PRICING = {                                 │    │
+│  │     'small_pickup': {'min': 22, 'max': 35},            │    │
+│  │     'light_commercial': {'min': 30, 'max': 45},        │    │
+│  │     'medium_heavy': {'min': 40, 'max': 65},            │    │
+│  │     'large_container': {'min': 60, 'max': 90}          │    │
+│  │   }                                                    │    │
+│  │                                                        │    │
+│  └────────────────────────────────────────────────────────┘    │
+│                                                                 │
+│  USER INPUT SOURCES (Runtime Parameters):                      │
+│  ┌────────────────────────────────────────────────────────┐    │
+│  │ Source: Web API requests / Mobile app inputs           │    │
+│  │ Endpoint: /api/routes, /api/predict, /api/vehicles     │    │
+│  │                                                        │    │
+│  │ • From find_alternate_routes():                        │    │
+│  │   - from_loc: string (start location)                  │    │
+│  │   - to_loc: string (end location)                      │    │
+│  │   - avoid_high_risk: boolean (default=True)            │    │
+│  │   - shipment_type: string (vehicle category)           │    │
+│  │                                                        │    │
+│  │ • From predict_disruptions():                          │    │
+│  │   - hours_ahead: integer (forecast window, default=24) │    │
+│  │                                                        │    │
+│  └────────────────────────────────────────────────────────┘    │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+
+COMPONENT: RoutePredictionEngine Class
+┌─────────────────────────────────────────────────────────────────┐
+│                                                                 │
+│  Initialize Risk Weights:                                      │
+│  ┌─────────────────────────────────────────────────────────┐   │
+│  │ rainfall:       0.25  (Most critical)                   │   │
+│  │ terrain:        0.20                                    │   │
+│  │ road_condition: 0.20                                    │   │
+│  │ traffic:        0.10                                    │   │
+│  │ bridge_status:  0.15                                    │   │
+│  │ historical:     0.10  (Least critical)                  │   │
+│  └─────────────────────────────────────────────────────────┘   │
+│                                                                 │
+│  Load Constants:                                               │
+│  • AIR_COST_MULTIPLIER = 3.5                                   │
+│  • SHIPMENT_PRICING = {vehicle types with cost ranges}         │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+
+OUTPUT: RoutePredictionEngine instance with configured parameters
+         ↓
+         ↓
+
+
+================================================================================
+                    STEP 2: CALCULATE ROAD RISK SCORE
+================================================================================
+
+FUNCTION: calculate_road_risk(road)
+INPUT: Single RoadSegment object
+
+DATA SOURCES FOR THIS STEP:
+┌─────────────────────────────────────────────────────────────────┐
+│                                                                 │
+│  Step 2A: FETCH WEATHER DATA                                   │
+┌─────────────────────────────────────────────────────────────────┐
+│                                                                 │
+│  For each Road Segment:                                        │
+│                                                                 │
+│  Step 2A: FETCH WEATHER DATA                                   │
+│  ┌──────────────────────────────────────────────────────────┐  │
+│  │ SELECT weather FROM WeatherData                          │  │
+│  │ WHERE district_id = road.district_id                     │  │
+│  │ ORDER BY recorded_at DESC                                │  │
+│  │ LIMIT 1                                                  │  │
+│  │                                                          │  │
+│  │ Calculate: rainfall_risk = f(rainfall_mm)                │  │
+│  │ • > 100mm → 1.0  (100%)                                 │  │
+│  │ • > 50mm  → 0.7  (70%)                                  │  │
+│  │ • > 20mm  → 0.4  (40%)                                  │  │
+│  │ • ≤ 20mm  → 0.1  (10%)                                  │  │
+│  └──────────────────────────────────────────────────────────┘  │
+│                        ↓                                        │
+│  Step 2B: EVALUATE TERRAIN TYPE                                │
+│  ┌──────────────────────────────────────────────────────────┐  │
+│  │ Lookup: terrain_risk = TERRAIN_MAP[road.terrain_type]    │  │
+│  │                                                          │  │
+│  │ Mapping:                                                │  │
+│  │ • plains       → 0.1  (safest)                          │  │
+│  │ • hilly        → 0.5  (medium)                          │  │
+│  │ • mountainous  → 0.8  (highest)                         │  │
+│  └──────────────────────────────────────────────────────────┘  │
+│                        ↓                                        │
+│  Step 2C: CHECK ROAD CONDITION                                 │
+│  ┌──────────────────────────────────────────────────────────┐  │
+│  │ Lookup: condition_risk = CONDITION_MAP[road.condition]   │  │
+│  │                                                          │  │
+│  │ Mapping:                                                │  │
+│  │ • good  → 0.1  (well maintained)                        │  │
+│  │ • fair  → 0.4  (acceptable)                             │  │
+│  │ • poor  → 0.8  (deteriorated)                           │  │
+│  └──────────────────────────────────────────────────────────┘  │
+│                        ↓                                        │
+│  Step 2D: EVALUATE TRAFFIC LEVEL                               │
+│  ┌──────────────────────────────────────────────────────────┐  │
+│  │ Lookup: traffic_risk = TRAFFIC_MAP[road.traffic_level]   │  │
+│  │                                                          │  │
+│  │ Mapping:                                                │  │
+│  │ • none      → 0.0  (empty)                              │  │
+│  │ • light     → 0.1  (low congestion)                     │  │
+│  │ • normal    → 0.2  (standard)                           │  │
+│  │ • moderate  → 0.4  (medium congestion)                  │  │
+│  │ • heavy     → 0.6  (congested)                          │  │
+│  └──────────────────────────────────────────────────────────┘  │
+│                        ↓                                        │
+│  Step 2E: CHECK BRIDGE STATUS                                  │
+│  ┌──────────────────────────────────────────────────────────┐  │
+│  │ SELECT bridges FROM Bridge                              │  │
+│  │ WHERE district_id = road.district_id                     │  │
+│  │                                                          │  │
+│  │ Evaluate: bridge_risk                                    │  │
+│  │ • If status = "closed"  → risk = 1.0  (impassable)      │  │
+│  │ • If status = "partial" → risk = 0.5  (limited)         │  │
+│  │ • If condition = "poor" → risk = 0.4  (unsafe)          │  │
+│  │ • Else                  → risk = 0.0  (safe)            │  │
+│  └──────────────────────────────────────────────────────────┘  │
+│                        ↓                                        │
+│  Step 2F: COUNT HISTORICAL INCIDENTS                           │
+│  ┌──────────────────────────────────────────────────────────┐  │
+│  │ SELECT COUNT(*) FROM Alert                              │  │
+│  │ WHERE (affected_districts CONTAINS from_location OR      │  │
+│  │        affected_districts CONTAINS to_location)          │  │
+│  │ AND created_at > (NOW - 7 days)                          │  │
+│  │                                                          │  │
+│  │ Calculate: historical_risk = min(alert_count × 0.15, 1) │  │
+│  │ • Each incident: +0.15 risk (capped at 100%)            │  │
+│  │ • Example: 4+ incidents → 1.0 risk                      │  │
+│  └──────────────────────────────────────────────────────────┘  │
+│                        ↓                                        │
+│  Step 2G: APPLY WEIGHTED FORMULA                               │
+│  ┌──────────────────────────────────────────────────────────┐  │
+│  │ Risk = (0.25 × rainfall_risk) +                          │  │
+│  │        (0.20 × terrain_risk) +                           │  │
+│  │        (0.20 × condition_risk) +                         │  │
+│  │        (0.10 × traffic_risk) +                           │  │
+│  │        (0.15 × bridge_risk) +                            │  │
+│  │        (0.10 × historical_risk)                          │  │
+│  │                                                          │  │
+│  │ Risk Range: [0.0, 1.0]                                  │  │
+│  └──────────────────────────────────────────────────────────┘  │
+│                        ↓                                        │
+│  Step 2H: APPLY STATUS OVERRIDE                                │
+│  ┌──────────────────────────────────────────────────────────┐  │
+│  │ IF road.status = "blocked"  → Risk = 1.0 (maximum)      │  │
+│  │ IF road.status = "partial"  → Risk = max(Risk, 0.75)    │  │
+│  │ ELSE                         → Risk = min(Risk, 1.0)     │  │
+│  └──────────────────────────────────────────────────────────┘  │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+
+OUTPUT: Road Risk Score (0.0 to 1.0) for each segment
+         ↓
+         ↓
+
+
+================================================================================
+                  STEP 3: PREDICT DISRUPTIONS
+================================================================================
+
+FUNCTION: predict_disruptions(hours_ahead=24)
+INPUT: Time horizon (default 24 hours)
+
+PROCESS FLOW:
+┌─────────────────────────────────────────────────────────────────┐
+│                                                                 │
+│  For each Road in Database:                                    │
+│                                                                 │
+│  Step 3A: CALCULATE ROAD RISK (uses Step 2)                    │
+│  ┌──────────────────────────────────────────────────────────┐  │
+│  │ risk_score = calculate_road_risk(road)                   │  │
+│  └──────────────────────────────────────────────────────────┘  │
+│                        ↓                                        │
+│  Step 3B: FETCH WEATHER DATA                                   │
+│  ┌──────────────────────────────────────────────────────────┐  │
+│  │ SELECT latest weather for district                       │  │
+│  │ Extract: rainfall_mm, weather_condition                  │  │
+│  └──────────────────────────────────────────────────────────┘  │
+│                        ↓                                        │
+│  Step 3C: TRIGGER PREDICTION CHECK                             │
+│  ┌──────────────────────────────────────────────────────────┐  │
+│  │ Predict = TRUE if ANY condition met:                     │  │
+│  │                                                          │  │
+│  │ 1. risk > 0.7                                           │  │
+│  │ 2. road.status ∈ {blocked, partial}                     │  │
+│  │ 3. (condition ∈ {poor, fair}) AND                       │  │
+│  │    (terrain ∈ {hilly, mountainous})                     │  │
+│  │ 4. rainfall >= 30mm                                     │  │
+│  │                                                          │  │
+│  │ IF NOT triggered → Skip to next road                    │  │
+│  │ IF triggered     → Continue to Step 3D                  │  │
+│  └──────────────────────────────────────────────────────────┘  │
+│                        ↓                                        │
+│  Step 3D: DETERMINE DISRUPTION TYPE                            │
+│  ┌──────────────────────────────────────────────────────────┐  │
+│  │ IF road.status = blocked                                │  │
+│  │    → Type = "road_closure"                              │  │
+│  │                                                          │  │
+│  │ ELSE IF rainfall > 80mm                                 │  │
+│  │    IF terrain ∈ {hilly, mountainous}                    │  │
+│  │       → Type = "landslide"                              │  │
+│  │    ELSE                                                 │  │
+│  │       → Type = "flood"                                  │  │
+│  │                                                          │  │
+│  │ ELSE IF rainfall > 30mm                                 │  │
+│  │    IF road.condition = poor                             │  │
+│  │       → Type = "road_damage"                            │  │
+│  │    ELSE                                                 │  │
+│  │       → Type = "water_logging"                          │  │
+│  │                                                          │  │
+│  │ ELSE IF road.condition = poor                           │  │
+│  │    → Type = "road_failure"                              │  │
+│  │                                                          │  │
+│  │ ELSE IF weather.condition = snow_rain                   │  │
+│  │    → Type = "snow_blockage"                             │  │
+│  │                                                          │  │
+│  │ ELSE                                                    │  │
+│  │    → Type = "traffic_congestion"                        │  │
+│  └──────────────────────────────────────────────────────────┘  │
+│                        ↓                                        │
+│  Step 3E: ASSIGN CONFIDENCE LEVEL                              │
+│  ┌──────────────────────────────────────────────────────────┐  │
+│  │ IF risk > 0.85 OR road status = {blocked, partial}      │  │
+│  │    → Confidence = "high"                                │  │
+│  │                                                          │  │
+│  │ ELSE IF risk > 0.70 OR                                  │  │
+│  │         (condition ∈ {poor, fair} AND                   │  │
+│  │          terrain ∈ {hilly, mountainous}) OR             │  │
+│  │         rainfall >= 30mm                                │  │
+│  │    → Confidence = "medium"                              │  │
+│  │                                                          │  │
+│  │ ELSE                                                    │  │
+│  │    → Confidence = "low"                                 │  │
+│  └──────────────────────────────────────────────────────────┘  │
+│                        ↓                                        │
+│  Step 3F: ESTIMATE DELAY                                       │
+│  ┌──────────────────────────────────────────────────────────┐  │
+│  │ Delay = 15 + (risk × 3 × 60 × (length / 50))            │  │
+│  │ Delay = 15 + 3.6 × risk × length                        │  │
+│  │                                                          │  │
+│  │ Result: minutes of estimated delay                      │  │
+│  └──────────────────────────────────────────────────────────┘  │
+│                        ↓                                        │
+│  Step 3G: CREATE PREDICTION RECORD                             │
+│  ┌──────────────────────────────────────────────────────────┐  │
+│  │ prediction = {                                           │  │
+│  │   'road_id': road.id,                                    │  │
+│  │   'road_name': road.name,                                │  │
+│  │   'from': road.from_location,                            │  │
+│  │   'to': road.to_location,                                │  │
+│  │   'risk_score': risk,                                    │  │
+│  │   'predicted_disruption': type,                          │  │
+│  │   'confidence': confidence_level,                        │  │
+│  │   'estimated_delay_minutes': delay,                      │  │
+│  │   'recommended_action': action,                          │  │
+│  │   'weather_data': weather_info,                          │  │
+│  │   'coordinates': {from, to}                              │  │
+│  │ }                                                        │  │
+│  └──────────────────────────────────────────────────────────┘  │
+│                                                                 │
+│  OUTPUT: List of top 20 disruption predictions (sorted by risk)│
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+
+OUTPUT: Disruption predictions sorted by risk score (descending)
+         ↓
+         ↓
+
+
+================================================================================
+                   STEP 4: BUILD ROAD NETWORK GRAPH
+================================================================================
+
+FUNCTION: find_alternate_routes()
+INPUT: from_location, to_location, shipment_type
+
+PROCESS FLOW:
+┌─────────────────────────────────────────────────────────────────┐
+│                                                                 │
+│  Step 4A: FETCH ALL ROAD SEGMENTS                              │
+│  ┌──────────────────────────────────────────────────────────┐  │
+│  │ SELECT * FROM RoadSegment                                │  │
+│  │ Load all available roads into memory                     │  │
+│  └──────────────────────────────────────────────────────────┘  │
+│                        ↓                                        │
+│  Step 4B: GET SHIPMENT PRICING                                 │
+│  ┌──────────────────────────────────────────────────────────┐  │
+│  │ pricing = SHIPMENT_PRICING[shipment_type]                │  │
+│  │                                                          │  │
+│  │ Extract: min_price, max_price                            │  │
+│  │ Calculate: base_cost = (min + max) / 2                  │  │
+│  └──────────────────────────────────────────────────────────┘  │
+│                        ↓                                        │
+│  Step 4C: BUILD ADJACENCY GRAPH                                │
+│  ┌──────────────────────────────────────────────────────────┐  │
+│  │ graph = {}                                               │  │
+│  │                                                          │  │
+│  │ For each road:                                           │  │
+│  │    1. Calculate risk = calculate_road_risk(road)         │  │
+│  │    2. Set weight = length × (1 + risk × 2)              │  │
+│  │       (higher risk = heavier weight)                     │  │
+│  │    3. Add edge: from_location → to_location             │  │
+│  │    4. Add reverse edge (bidirectional roads)             │  │
+│  │                                                          │  │
+│  │ graph[location] = [                                      │  │
+│  │   {'to': next_location, 'weight': w, 'risk': r, ...}    │  │
+│  │ ]                                                        │  │
+│  └──────────────────────────────────────────────────────────┘  │
+│                        ↓                                        │
+│  Step 4D: NORMALIZE LOCATION NAMES                             │
+│  ┌──────────────────────────────────────────────────────────┐  │
+│  │ Create case-insensitive location mapping                 │  │
+│  │ known_locations = {                                      │  │
+│  │   'location'.lower(): 'location',                        │  │
+│  │   ...                                                    │  │
+│  │ }                                                        │  │
+│  │                                                          │  │
+│  │ source = known_locations[from_loc.lower()]              │  │
+│  │ destination = known_locations[to_loc.lower()]            │  │
+│  │                                                          │  │
+│  │ IF source or destination not found:                      │  │
+│  │    → Return fallback/air route                           │  │
+│  └──────────────────────────────────────────────────────────┘  │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+
+OUTPUT: Graph structure with weighted edges + source & destination
+         ↓
+         ↓
+
+
+================================================================================
+                    STEP 5: SEARCH ROUTE PATHS
+================================================================================
+
+FUNCTION: _search_route_paths(graph, source, destination)
+INPUT: Graph, start location, end location
+
+PROCESS FLOW:
+┌─────────────────────────────────────────────────────────────────┐
+│                                                                 │
+│  Algorithm: Dijkstra-inspired Shortest Path Search             │
+│                                                                 │
+│  Step 5A: INITIALIZE PRIORITY QUEUE                            │
+│  ┌──────────────────────────────────────────────────────────┐  │
+│  │ queue = [(cost=0, source_location, path=[], edges=[])]   │  │
+│  │ routes = []                                              │  │
+│  │ seen_paths = {}  (to avoid duplicate routes)             │  │
+│  │                                                          │  │
+│  │ sequence = 0  (tie-breaker for heap)                     │  │
+│  └──────────────────────────────────────────────────────────┘  │
+│                        ↓                                        │
+│  Step 5B: MAIN LOOP - POP LOWEST COST PATH                     │
+│  ┌──────────────────────────────────────────────────────────┐  │
+│  │ WHILE queue not empty:                                   │  │
+│  │                                                          │  │
+│  │   1. Pop (cost, seq, current_location, path, edges)      │  │
+│  │   2. new_path = path + [current_location]                │  │
+│  │                                                          │  │
+│  │   3. IF current_location = destination:                  │  │
+│  │        ✓ Check if path already seen                      │  │
+│  │        ✓ IF new: add to routes list                      │  │
+│  │        ✓ CONTINUE (find more paths)                      │  │
+│  │                                                          │  │
+│  │   4. FOR each edge from current_location:                │  │
+│  │        • IF edge.to in new_path: SKIP (avoid loops)      │  │
+│  │        • IF edge.status = blocked AND avoid_blocked:     │  │
+│  │          SKIP (respect road closures)                    │  │
+│  │        • ELSE: Push to queue with new cost               │  │
+│  │                                                          │  │
+│  │ Output: Up to 5 distinct simple paths from source→dest   │  │
+│  └──────────────────────────────────────────────────────────┘  │
+│                        ↓                                        │
+│  Step 5C: SORT ROUTES BY COST                                  │
+│  ┌──────────────────────────────────────────────────────────┐  │
+│  │ routes.sort(key = cost)                                  │  │
+│  │                                                          │  │
+│  │ Result: Cheapest (least risky) routes first              │  │
+│  └──────────────────────────────────────────────────────────┘  │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+
+OUTPUT: Up to 5 alternative routes (path + cost + edges)
+         ↓
+         ↓
+
+
+================================================================================
+                        STEP 6: BUILD ROUTE DETAILS
+================================================================================
+
+FUNCTION: _build_route_details()
+INPUT: Route path + graph edges
+
+PROCESS FLOW:
+┌─────────────────────────────────────────────────────────────────┐
+│                                                                 │
+│  For each route found in Step 5:                               │
+│                                                                 │
+│  Step 6A: ACCUMULATE SEGMENT INFORMATION                        │
+│  ┌──────────────────────────────────────────────────────────┐  │
+│  │ segments = []                                            │  │
+│  │ total_distance = 0                                       │  │
+│  │ total_time = 0                                           │  │
+│  │ total_risk = 0                                           │  │
+│  │                                                          │  │
+│  │ FOR each edge in route.edges:                            │  │
+│  │    1. Extract road segment details                       │  │
+│  │    2. distance += segment.length                         │  │
+│  │    3. time += (length / avg_speed) [in minutes]          │  │
+│  │    4. risk += segment.risk_score                         │  │
+│  │    5. Add to segments list with metadata                 │  │
+│  │                                                          │  │
+│  │ average_risk = total_risk / number_of_segments           │  │
+│  └──────────────────────────────────────────────────────────┘  │
+│                        ↓                                        │
+│  Step 6B: CREATE ROUTE OBJECT                                  │
+│  ┌──────────────────────────────────────────────────────────┐  │
+│  │ route_details = {                                        │  │
+│  │   'from': source_location,                               │  │
+│  │   'to': destination_location,                            │  │
+│  │   'total_distance_km': distance,                          │  │
+│  │   'estimated_time_minutes': time,                         │  │
+│  │   'average_risk': average_risk,                           │  │
+│  │   'segments': [segment_list],                             │  │
+│  │   'status': road.status,                                  │  │
+│  │   'blocked': (road.status = 'blocked')                    │  │
+│  │   'coordinates': {from, to}                               │  │
+│  │ }                                                        │  │
+│  └──────────────────────────────────────────────────────────┘  │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+
+OUTPUT: Detailed route objects with full metadata
+         ↓
+         ↓
+
+
+================================================================================
+                    STEP 7: RANK & SCORE ROUTES
+================================================================================
+
+FUNCTION: _rank_routes()
+INPUT: Route details + shipment pricing
+
+PROCESS FLOW:
+┌─────────────────────────────────────────────────────────────────┐
+│                                                                 │
+│  For each route:                                               │
+│                                                                 │
+│  Step 7A: CALCULATE COST METRICS                               │
+│  ┌──────────────────────────────────────────────────────────┐  │
+│  │ cost_rate = base_cost_per_km                             │  │
+│  │             × (3.5 if air_route else 1.0)                │  │
+│  │                                                          │  │
+│  │ estimated_cost = distance × cost_rate                    │  │
+│  │ cost_per_km = estimated_cost / distance                  │  │
+│  │                                                          │  │
+│  │ cost_efficiency = min(100,                               │  │
+│  │                   (50 × base_cost) / cost_per_km)        │  │
+│  └──────────────────────────────────────────────────────────┘  │
+│                        ↓                                        │
+│  Step 7B: CALCULATE SAFETY SCORE (0-40 points)                │
+│  ┌──────────────────────────────────────────────────────────┐  │
+│  │ IF route.blocked = TRUE:                                 │  │
+│  │    safety_score = 0                                      │  │
+│  │                                                          │  │
+│  │ ELSE:                                                    │  │
+│  │    safety_score = (1 - average_risk) × 40                │  │
+│  │                                                          │  │
+│  │ Range: [0, 40]                                           │  │
+│  └──────────────────────────────────────────────────────────┘  │
+│                        ↓                                        │
+│  Step 7C: CALCULATE COST SCORE (0-40 points)                  │
+│  ┌──────────────────────────────────────────────────────────┐  │
+│  │ IF route.blocked = TRUE:                                 │  │
+│  │    cost_score = 0                                        │  │
+│  │                                                          │  │
+│  │ ELSE:                                                    │  │
+│  │    cost_score = cost_efficiency × 0.4                    │  │
+│  │                                                          │  │
+│  │ Range: [0, 40]                                           │  │
+│  └──────────────────────────────────────────────────────────┘  │
+│                        ↓                                        │
+│  Step 7D: CALCULATE SPEED SCORE (0-20 points)                 │
+│  ┌──────────────────────────────────────────────────────────┐  │
+│  │ fastest_time = min(estimated_time across all routes)     │  │
+│  │                                                          │  │
+│  │ IF route.blocked = TRUE:                                 │  │
+│  │    speed_score = 0                                       │  │
+│  │                                                          │  │
+│  │ ELSE:                                                    │  │
+│  │    speed_score = min(20,                                 │  │
+│  │        (fastest_time / estimated_time) × 20)             │  │
+│  │                                                          │  │
+│  │ Range: [0, 20]                                           │  │
+│  └──────────────────────────────────────────────────────────┘  │
+│                        ↓                                        │
+│  Step 7E: CALCULATE TOTAL ROUTE SCORE                          │
+│  ┌──────────────────────────────────────────────────────────┐  │
+│  │ route_score = safety_score + cost_score + speed_score    │  │
+│  │                                                          │  │
+│  │ Range: [0, 100]                                          │  │
+│  │                                                          │  │
+│  │ Higher score = Better route                              │  │
+│  └──────────────────────────────────────────────────────────┘  │
+│                        ↓                                        │
+│  Step 7F: GENERATE RECOMMENDATIONS                             │
+│  ┌──────────────────────────────────────────────────────────┐  │
+│  │ IF average_risk > 0.9:                                   │  │
+│  │    action = "ROUTE CLOSURE RECOMMENDED"                  │  │
+│  │                                                          │  │
+│  │ ELSE IF average_risk > 0.8:                              │  │
+│  │    action = "HEAVY RESTRICTION"                          │  │
+│  │                                                          │  │
+│  │ ELSE IF average_risk > 0.7:                              │  │
+│  │    action = "CAUTION REQUIRED"                           │  │
+│  │                                                          │  │
+│  │ ELSE:                                                    │  │
+│  │    action = "NORMAL PRECAUTIONS"                         │  │
+│  └──────────────────────────────────────────────────────────┘  │
+│                        ↓                                        │
+│  Step 7G: SORT ROUTES BY COMPOSITE SCORE                       │
+│  ┌──────────────────────────────────────────────────────────┐  │
+│  │ Sort by:                                                 │  │
+│  │    1. route_score (descending) - highest score first      │  │
+│  │    2. safety_score (descending) - if tied                │  │
+│  │    3. -estimated_time (ascending) - if still tied        │  │
+│  │                                                          │  │
+│  │ Result: Ranked list from BEST to WORST                   │  │
+│  └──────────────────────────────────────────────────────────┘  │
+│                        ↓                                        │
+│  Step 7H: ADD FALLBACK ROUTES                                  │
+│  ┌──────────────────────────────────────────────────────────┐  │
+│  │ IF all routes are blocked:                               │  │
+│  │    • Calculate direct distance via Haversine formula      │  │
+│  │    • Create air corridor as last resort                  │  │
+│  │    • Multiply cost by 3.5 (air multiplier)               │  │
+│  └──────────────────────────────────────────────────────────┘  │
+│                                                                 │
+│  FINAL OUTPUT:                                                 │
+│  ┌──────────────────────────────────────────────────────────┐  │
+│  │ Routes Array (sorted by quality):                        │  │
+│  │ [                                                        │  │
+│  │   {                                                      │  │
+│  │     'from': location1,                                   │  │
+│  │     'to': location2,                                     │  │
+│  │     'route_score': 85.5,  ← MAIN SCORE                   │  │
+│  │     'safety_score': 32.0,                                │  │
+│  │     'cost_score': 35.0,                                  │  │
+│  │     'speed_score': 18.5,                                 │  │
+│  │     'total_distance_km': 250,                            │  │
+│  │     'estimated_time_minutes': 360,                       │  │
+│  │     'estimated_cost_inr': 12500,                         │  │
+│  │     'average_risk': 0.42,                                │  │
+│  │     'segments': [...],                                   │  │
+│  │     'recommended_action': "CAUTION REQUIRED"             │  │
+│  │   },                                                     │  │
+│  │   ...                                                    │  │
+│  │ ]                                                        │  │
+│  └──────────────────────────────────────────────────────────┘  │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+
+OUTPUT: Ranked list of routes with scores sent to user/API
+         ↓
+         ↓
+
+
+================================================================================
+                        COMPLETE WORKFLOW SUMMARY
+================================================================================
+
+DATA FLOW DIAGRAM:
+────────────────
+
+┌──────────────────┐
+│  DATABASE        │
+│  ┌────────────┐  │
+│  │ RoadSegment│  │
+│  │ WeatherData│  │
+│  │ Bridge     │  │ 
+│  │ Alert      │  │
+│  │ Vehicle    │  │
+│  │ District   │  │
+│  └────────────┘  │
+└─────────┬────────┘
+          │
+          ↓
+┌─────────────────────────────┐
+│    STEP 1: INITIALIZE       │
+│  Load weights & constants   │
+└────────┬────────────────────┘
+         │
+         ↓
+┌─────────────────────────────┐
+│  STEP 2: CALCULATE RISK     │
+│  For each road segment      │
+│  Risk ∈ [0, 1]              │
+└────────┬────────────────────┘
+         │
+         ↓
+┌─────────────────────────────┐
+│  STEP 3: PREDICT            │
+│  Disruptions                │
+│  & Alerts                   │
+└────────┬────────────────────┘
+         │
+         ↓
+┌─────────────────────────────┐
+│  STEP 4: BUILD GRAPH        │
+│  Weighted road network      │
+│  from_location ↔ to_location│
+└────────┬────────────────────┘
+         │
+         ↓
+┌─────────────────────────────┐
+│  STEP 5: PATHFINDING        │
+│  Find 5 best routes         │
+│  (Dijkstra-style)           │
+└────────┬────────────────────┘
+         │
+         ↓
+┌─────────────────────────────┐
+│  STEP 6: BUILD DETAILS      │
+│  Accumulate segment data    │
+│  Distance, time, risk       │
+└────────┬────────────────────┘
+         │
+         ↓
+┌─────────────────────────────┐
+│  STEP 7: RANK & SCORE       │
+│  Score ∈ [0, 100]           │
+│  Safety + Cost + Speed      │
+└────────┬────────────────────┘
+         │
+         ↓
+┌──────────────────────────────┐
+│   USER / API RESPONSE        │
+│  Ranked routes with scores   │
+│  Recommendations & actions   │
+└──────────────────────────────┘
+
+
+WHAT EACH COMPONENT DOES:
+─────────────────────────
+
+COMPONENT                   PURPOSE
+──────────────────────────────────────────────────────────────────
+Step 1: Initialization      Configure scoring system with weights
+Step 2: Risk Calculation    Evaluate individual road safety (0-1)
+Step 3: Disruption Pred.    Predict & alert for dangerous roads
+Step 4: Graph Building      Create network of connected roads
+Step 5: Pathfinding         Find optimal alternative routes
+Step 6: Detail Building     Aggregate full route information
+Step 7: Scoring & Ranking   Evaluate & rank routes (0-100)
+────────────────────────────────────────────────────────────────
+
+
+KEY METRICS USED:
+─────────────────
+
+METRIC                  RANGE      PURPOSE
+──────────────────────────────────────────────────────────────────
+Road Risk Score         [0, 1]     Safety level of each segment
+Route Safety Score      [0, 40]    Safety of entire route
+Route Cost Score        [0, 40]    Cost efficiency
+Route Speed Score       [0, 20]    Time efficiency
+Total Route Score       [0, 100]   Overall route quality
+────────────────────────────────────────────────────────────────
+
+
+INPUT DATA TYPES:
+─────────────────
+
+DATA TYPE           SOURCE          USED IN
+──────────────────────────────────────────────────────────────────
+Rainfall            WeatherData     Step 2: Risk calculation
+Terrain Type        RoadSegment     Step 2: Risk calculation
+Road Condition      RoadSegment     Step 2: Risk calculation
+Traffic Level       RoadSegment     Step 2: Risk calculation
+Bridge Status       Bridge          Step 2: Risk calculation
+Incidents (7 day)   Alert           Step 2: Risk calculation
+Road Length         RoadSegment     Step 5, 6, 7: Path evaluation
+Road Coordinates    RoadSegment     Step 4: Graph building
+Vehicle Type        User Input      Step 7: Pricing
+Shipment Pricing    Constants       Step 7: Cost scoring
+────────────────────────────────────────────────────────────────
+
+
+OUTPUT DATA TYPES:
+──────────────────
+
+OUTPUT                  FORMAT              USED FOR
+──────────────────────────────────────────────────────────────────
+Risk Predictions        JSON Array          User alerts
+Disruption Type         String              Warning system
+Confidence Level        String              Alert priority
+Alternative Routes      JSON Objects        Navigation
+Route Scores            Float [0-100]       Route ranking
+Estimated Times         Integer (minutes)   ETA calculation
+Estimated Costs         Integer (₹)         Pricing display
+Coordinates             Lat/Lng pairs       Map display
+────────────────────────────────────────────────────────────────
+
+
+DECISION THRESHOLDS:
+───────────────────
+
+THRESHOLD               VALUE       TRIGGERS
+──────────────────────────────────────────────────────────────────
+Disruption Trigger      0.7         Prediction alert
+High Confidence         0.85        Critical alert
+Route Closure Alert     0.9         Emergency notification
+Weather Critical        30mm        Rainfall warning
+Weather Severe          80mm        Flood/landslide warning
+────────────────────────────────────────────────────────────────
+
+
+================================================================================
+                    DATA SOURCES MASTER MAP
+================================================================================
+
+WHERE IS EACH DATA COMING FROM? - DETAILED BREAKDOWN
+─────────────────────────────────────────────────────
+
+
+STEP 1: INITIALIZATION - DATA SOURCES
+──────────────────────────────────────
+
+┌─ DATABASE CONNECTIONS ────────────────────────────────────────┐
+│                                                               │
+│ Technology: SQLAlchemy ORM + Flask                            │
+│ Database: PostgreSQL (production) / SQLite (development)      │
+│ Location: instance/app.db (or remote DB connection)           │
+│ Models File: models.py (defines table structure)              │
+│                                                               │
+│ Connection String: sqlite:///instance/app.db                  │
+│ OR: postgresql://user:pass@host:5432/database                 │
+│                                                               │
+└───────────────────────────────────────────────────────────────┘
+
+STEP 1 Data Origins:
+
+Risk Weights
+  ├─ Location: ai_engine.py (line 20-26)
+  ├─ Type: Python dictionary in __init__ method
+  ├─ Values: Manually configured by development team
+  ├─ Last Modified: Based on domain expertise & testing
+  └─ How Used: Multipliers for each risk factor
+
+
+Shipment Pricing
+  ├─ Location: ai_engine.py (line 14-18)
+  ├─ Type: Nested dictionary (vehicle_type → pricing)
+  ├─ Data Entry: Logistics operations team updates
+  ├─ Update Frequency: Monthly or when rates change
+  └─ How Used: Calculate route cost_per_km
+
+
+Air Cost Multiplier
+  ├─ Location: ai_engine.py (line 13)
+  ├─ Type: Constant float (3.5)
+  ├─ Reason: Emergency air routes cost 3.5x ground routes
+  ├─ Update Frequency: Rarely changes
+  └─ How Used: When all ground routes blocked
+
+
+================================================================================
+                    STEP 2: RISK CALCULATION - DATA SOURCES
+================================================================================
+
+Rainfall Factor
+  ├─ Source: WeatherData table
+  ├─ API: OpenWeatherMap, NOAA, IMD India (real-time)
+  ├─ Update Frequency: Every 1-6 hours via cron job
+  ├─ SQL: SELECT rainfall_mm FROM WeatherData 
+  │       WHERE district_id=? ORDER BY recorded_at DESC LIMIT 1
+  ├─ ORM: WeatherData.query.filter_by(district_id=road.district_id)
+  ├─ Data Age: 1-6 hours old
+  ├─ Lookup Table:
+  │    > 100mm  → 1.0
+  │    > 50mm   → 0.7
+  │    > 20mm   → 0.4
+  │    ≤ 20mm   → 0.1
+  └─ Weight in Risk: 0.25 (25% - Most Critical)
+
+
+Terrain Type
+  ├─ Source: RoadSegment table (imported data)
+  ├─ Data Entry: Admin import via import_highways.py
+  ├─ SQL: road.terrain_type (direct column access)
+  ├─ Values: {plains, hilly, mountainous}
+  ├─ Data Age: Static (uploaded once)
+  ├─ Lookup Table:
+  │    plains       → 0.1
+  │    hilly        → 0.5
+  │    mountainous  → 0.8
+  └─ Weight in Risk: 0.20 (20%)
+
+
+Road Condition
+  ├─ Source: RoadSegment table (field reports)
+  ├─ Data Entry: Field workers via mobile app or admin dashboard
+  ├─ SQL: road.condition (direct column access)
+  ├─ Values: {good, fair, poor}
+  ├─ Update Frequency: When maintenance/damage reported
+  ├─ Lookup Table:
+  │    good   → 0.1
+  │    fair   → 0.4
+  │    poor   → 0.8
+  └─ Weight in Risk: 0.20 (20%)
+
+
+Traffic Level
+  ├─ Source: RoadSegment table
+  ├─ Data Entry: Admin configuration (currently static)
+  ├─ SQL: road.traffic_level (direct column access)
+  ├─ Values: {none, light, normal, moderate, heavy}
+  ├─ Data Age: Static (can be updated real-time)
+  ├─ Lookup Table:
+  │    none      → 0.0
+  │    light     → 0.1
+  │    normal    → 0.2
+  │    moderate  → 0.4
+  │    heavy     → 0.6
+  └─ Weight in Risk: 0.10 (10%)
+
+
+Bridge Status
+  ├─ Source: Bridge table
+  ├─ Data Entry: Field workers report status changes
+  ├─ SQL: SELECT * FROM Bridge WHERE district_id=?
+  ├─ ORM: Bridge.query.filter_by(district_id=road.district_id).all()
+  ├─ Columns: id, name, status, condition, district_id
+  ├─ Status Values: {open, partial, closed}
+  ├─ Update Frequency: When bridges inspected/closed
+  ├─ Lookup Table:
+  │    closed   → 1.0
+  │    partial  → 0.5
+  │    poor     → 0.4
+  │    good     → 0.0
+  └─ Weight in Risk: 0.15 (15%)
+
+
+Historical Incidents
+  ├─ Source: Alert table (7-day rolling window)
+  ├─ Data Entry: Field workers via mobile app + system auto-triggers
+  ├─ SQL: SELECT COUNT(*) FROM Alert 
+  │       WHERE created_at > (NOW - 7 days) AND
+  │       (affected_districts CONTAINS location1 OR
+  │        affected_districts CONTAINS location2)
+  ├─ ORM: Alert.query.filter(Alert.created_at > past_7_days).count()
+  ├─ Alert Types: {flooding, landslide, accident, closure}
+  ├─ Columns: id, affected_districts, alert_type, severity, created_at
+  ├─ Calculation: min(alert_count × 0.15, 1.0)
+  ├─ Data Age: Real-time (as incidents are reported)
+  ├─ Example: 4+ incidents in past 7 days = 1.0 (100% risk)
+  └─ Weight in Risk: 0.10 (10%)
+
+
+================================================================================
+                    STEP 3: DISRUPTION PREDICTION - DATA SOURCES
+================================================================================
+
+All Data from Step 2 (Risk Calculation)
+
+PLUS:
+
+Road Status
+  ├─ Source: RoadSegment.status column
+  ├─ Values: {open, partial, blocked}
+  ├─ Data Entry: Admin updates
+  ├─ SQL: road.status (direct access)
+  ├─ Usage: Trigger disruption alert if = blocked or partial
+  └─ How Used: Override risk calculation (set risk=1.0)
+
+
+Weather Condition Type
+  ├─ Source: WeatherData.weather_condition column
+  ├─ Data Entry: OpenWeatherMap API codes
+  ├─ Values: {clear, rain, snow, snow_rain, fog, storm}
+  ├─ SQL: weather.weather_condition (direct access)
+  ├─ Data Age: Updated with each weather API call
+  ├─ Usage: Determine disruption type
+  └─ How Used: Decision tree for flood vs landslide vs snow
+
+
+Forecast Window
+  ├─ Source: User input parameter
+  ├─ Parameter: hours_ahead (default=24)
+  ├─ API Endpoint: /api/predict?hours_ahead=48
+  ├─ Range: 1-168 hours (7 days max)
+  └─ How Used: Determines prediction lookback period
+
+
+================================================================================
+                    STEP 4: GRAPH BUILDING - DATA SOURCES
+================================================================================
+
+All Road Segments
+  ├─ Source: RoadSegment table
+  ├─ SQL: SELECT * FROM RoadSegment
+  ├─ ORM: RoadSegment.query.all()
+  ├─ Data Age: Static (loaded once per request)
+  ├─ Columns Used: id, from_location, to_location, length_km,
+  │              from_lat, from_lng, to_lat, to_lng, status
+  └─ How Used: Build adjacency list graph
+
+
+Edge Weights Calculation
+  ├─ Components:
+  │    • road.length_km (from RoadSegment)
+  │    • risk_score (from Step 2 calculation)
+  ├─ Formula: weight = length × (1 + risk × 2)
+  ├─ Logic: Higher risk = heavier weight (longer virtual distance)
+  ├─ Example: 100km road with 0.5 risk
+  │    weight = 100 × (1 + 0.5 × 2) = 100 × 2 = 200
+  └─ How Used: Dijkstra algorithm for pathfinding
+
+
+Location Names Matching
+  ├─ Source: User input + RoadSegment from/to_location columns
+  ├─ API: /api/routes?from=Imphal&to=Aizawl
+  ├─ Lookup Method: Case-insensitive matching
+  ├─ Data Structure: Dictionary mapping
+  │    known_locations = {
+  │      'imphal': 'Imphal',
+  │      'aizawl': 'Aizawl',
+  │      ...
+  │    }
+  ├─ Fallback: If location not found → return empty/fallback route
+  └─ How Used: Map user input to actual road endpoints
+
+
+User Parameters
+  ├─ from_location: String (start point)
+  ├─ to_location: String (destination)
+  ├─ shipment_type: {small_pickup, light_commercial, medium_heavy, large_container}
+  ├─ avoid_high_risk: Boolean (True = skip risky roads)
+  ├─ Data Entry: Web form or mobile app API request
+  └─ How Used: Filter graph edges & calculate pricing
+
+
+================================================================================
+                    STEP 5: PATHFINDING - DATA SOURCES
+================================================================================
+
+Graph Structure (In-Memory)
+  ├─ Source: Built in Step 4
+  ├─ Type: Python dictionary (adjacency list)
+  ├─ Storage: RAM (discarded after response)
+  ├─ Example:
+  │    graph = {
+  │      'Imphal': [
+  │        {'to': 'Churachandpur', 'weight': 150, 'risk': 0.45, ...},
+  │        {'to': 'Senapati', 'weight': 120, 'risk': 0.35, ...}
+  │      ],
+  │      ...
+  │    }
+  └─ How Used: Dijkstra pathfinding algorithm
+
+
+Edge Metadata
+  ├─ Source: RoadSegment + Step 2 calculations
+  ├─ Fields:
+  │    'to': destination location
+  │    'weight': Dijkstra cost
+  │    'risk': risk score [0-1]
+  │    'status': {open, partial, blocked}
+  │    'road_key': unique identifier
+  │    'road': RoadSegment object reference
+  └─ How Used: Decision-making in pathfinding
+
+
+Blocking Rules
+  ├─ Rule 1: IF edge.status = 'blocked' AND avoid_blocked = True
+  │          → Skip this edge (don't traverse)
+  ├─ Rule 2: IF node in new_path → Skip (avoid loops)
+  ├─ Rule 3: IF queue size > 5 routes found → Stop searching
+  └─ How Used: Generate alternative safe routes
+
+
+================================================================================
+                    STEP 6: DETAIL BUILDING - DATA SOURCES
+================================================================================
+
+Road Segments Along Path
+  ├─ Source: RoadSegment properties (from edges)
+  ├─ Data: length_km, condition, status, coordinates
+  ├─ Accessed Via: Direct property access from road object
+  ├─ Columns: from_lat, from_lng, to_lat, to_lng
+  ├─ Aggregation: Sum all segment lengths, conditions
+  └─ How Used: Build detailed route object
+
+
+Coordinates
+  ├─ Source: RoadSegment lat/lng columns
+  ├─ Format: Decimal degrees (e.g., 24.8245, 93.9456)
+  ├─ Columns: from_lat, from_lng, to_lat, to_lng
+  ├─ Precision: ~100 meters per decimal place
+  ├─ Data Age: Static (from import)
+  └─ How Used: Display on map via Google Maps API
+
+
+Travel Time Estimation
+  ├─ Method: Distance / average_speed
+  ├─ Average Speed: 40-60 km/hour (hardcoded assumption)
+  ├─ Calculation: (distance_km / 50) × 60 minutes
+  ├─ Source: Hardcoded in code (not from database)
+  ├─ Data Age: Constant (same for all routes)
+  └─ How Used: Speed score calculation
+
+
+Segment Metadata
+  ├─ Source: RoadSegment table
+  ├─ Fields: name, road_type, terrain, condition, status
+  ├─ Used For: Display in segments list
+  └─ How Used: User-friendly route description
+
+
+================================================================================
+                    STEP 7: SCORING & RANKING - DATA SOURCES
+================================================================================
+
+Cost Information
+  ├─ Base Cost: SHIPMENT_PRICING[selected_vehicle_type]
+  ├─ Source: Constants (ai_engine.py)
+  ├─ Lookup: 'medium_heavy' → {'min': 40, 'max': 65}
+  ├─ Calculation: base_cost = (min + max) / 2 = 52.5
+  ├─ Distance: From route total_distance_km
+  ├─ Air Multiplier: 3.5× if air_route detected
+  ├─ Formula: total_cost = distance × base_cost × multiplier
+  └─ How Used: Calculate cost_per_km and cost_score
+
+
+Risk Scores
+  ├─ Source: Aggregated from all route segments (Step 2)
+  ├─ Calculation: average_risk = Σ(segment_risk) / num_segments
+  ├─ Range: [0, 1]
+  ├─ Data Age: Freshly calculated per request
+  ├─ Stored In: route['average_risk']
+  └─ How Used: Calculate safety_score = (1 - avg_risk) × 40
+
+
+Time Data
+  ├─ Source: Calculated in Step 6
+  ├─ Field: estimated_time_minutes
+  ├─ Reference: min(time) across all routes
+  ├─ Calculation: (distance / avg_speed) × 60
+  ├─ Data Age: Freshly calculated
+  └─ How Used: Calculate speed_score = (fastest_time / route_time) × 20
+
+
+Recommendation Rules
+  ├─ Source: Hardcoded decision tree (ai_engine.py)
+  ├─ Method: _recommend_action(risk, disruption_type)
+  ├─ Thresholds:
+  │    risk > 0.9 → "ROUTE CLOSURE RECOMMENDED"
+  │    risk > 0.8 → "HEAVY RESTRICTION"
+  │    risk > 0.7 → "CAUTION REQUIRED"
+  │    risk ≤ 0.7 → "NORMAL PRECAUTIONS"
+  ├─ Data Age: Constant (rule-based)
+  └─ How Used: Generate actionable recommendation
+
+
+Ranking Sort Order
+  ├─ Primary: Sort by route_score (descending)
+  ├─ Secondary: Sort by safety_score (descending if tied)
+  ├─ Tertiary: Sort by -estimated_time (ascending if still tied)
+  ├─ Algorithm: Python sorted() with custom comparator
+  ├─ Output: Best routes first
+  └─ How Used: Present routes in priority order
+
+
+================================================================================
+                    COMPLETE DATA FLOW DIAGRAM
+================================================================================
+
+EXTERNAL DATA SOURCES:
+──────────────────────
+
+  Weather APIs              Field Workers       Admin Console
+       │                         │                    │
+       ├─ OpenWeatherMap         ├─ Mobile App        ├─ Import CSV
+       ├─ NOAA                    │  (Bridge reports)  ├─ Manual Entry
+       └─ IMD India              └─ Incident alerts   └─ Config update
+            │                         │                    │
+            └─────────────┬───────────┴────────────────────┘
+                          │ (Scheduled cron jobs)
+                          │ (API pull every 1-6 hours)
+                          │ (Mobile app webhooks)
+                          ↓
+       ┌──────────────────────────────────┐
+       │   DATABASE (SQLAlchemy ORM)      │
+       │                                  │
+       │   Tables:                        │
+       │  ┌────────────────────────────┐  │
+       │  │ RoadSegment                │  │  (Static infrastructure)
+       │  │ WeatherData                │  │  (Real-time weather)
+       │  │ Bridge                     │  │  (Field reports)
+       │  │ Alert                      │  │  (Incident tracking)
+       │  │ Vehicle                    │  │  (Pricing tiers)
+       │  │ District                   │  │  (Geographic reference)
+       │  └────────────────────────────┘  │
+       │                                  │
+       └────────────┬─────────────────────┘
+                    │
+      ┌─────────────┼─────────────┬──────────────────┐
+      │             │             │                  │
+      ↓             ↓             ↓                  ↓
+  STEP 1        STEP 2         STEP 3             Step 4+
+INITIALIZE  CALCULATE RISK  PREDICT ISSUES    PATHFINDING
+Load Data   (Weather,       (Alerts,          Build Graph
+            Conditions)     Warnings)         (In-Memory)
+      │             │             │                  │
+      └─────────────┼─────────────┴──────────────────┤
+                    │                                 │
+                    ├─ User Input ────────────────────┤
+                    │  (from, to, vehicle)            │
+                    │                                 │
+                    ↓                                 ↓
+          ┌──────────────────┐        ┌──────────────────────┐
+          │  STEP 5-7        │        │  STEP 6-7            │
+          │  PATHFINDING     │────→   │  SCORE & RANK        │
+          │  CALCULATE       │        │  FORMAT RESPONSE     │
+          │  WEIGHTS         │        │                      │
+          └──────────────────┘        └──────────┬───────────┘
+                                                  │
+                                                  ↓
+                                    ┌──────────────────────────┐
+                                    │  JSON RESPONSE TO USER   │
+                                    │                          │
+                                    │  Routes with:            │
+                                    │  • Scores [0-100]        │
+                                    │  • Risk [0-1]            │
+                                    │  • Cost estimates        │
+                                    │  • Time estimates        │
+                                    │  • Safety recommendations │
+                                    │  • Coordinates for maps  │
+                                    │                          │
+                                    └──────────────────────────┘
+
+
+DATA CLASSIFICATION:
+────────────────────
+
+STATIC DATA (Loaded once):
+  → RoadSegment table (road network)
+  → District table (geographic reference)
+  → Vehicle pricing constants
+  → Risk weight algorithm
+
+SEMI-DYNAMIC DATA (Updated manually):
+  → Road condition assessments
+  → Bridge status
+  → Shipment pricing
+
+REAL-TIME DATA (Updated frequently):
+  → Weather information (hourly via APIs)
+  → Incident alerts (as they occur)
+  → Traffic conditions
+
+USER-DRIVEN DATA (Per request):
+  → Origin location
+  → Destination location
+  → Vehicle type selection
+  → Risk avoidance preference
+
+COMPUTED DATA (Generated per request):
+  → Risk scores for each segment
+  → Route path options
+  → Cost and time estimates
+  → Safety, cost, and speed scores
+  → Overall route ranking
+
+
+
+
+The 7-step process creates a complete intelligent routing system:
+
+1. INITIALIZE      → Set up scoring parameters
+2. CALCULATE       → Measure road safety using multiple factors
+3. PREDICT         → Identify dangerous situations ahead
+4. BUILD NETWORK   → Create road connectivity graph
+5. PATHFIND        → Discover alternative routes
+6. AGGREGATE       → Compile detailed route information
+7. SCORE & RANK    → Evaluate and present best options
+
+Each step builds on the previous one, transforming raw data into
+actionable route recommendations with safety, cost, and time analysis.
+
+DATA INTEGRATION SUMMARY:
+─────────────────────────
+
+Total Data Sources:      6 primary database tables
+External APIs:           3 weather data providers
+Configuration Sources:   2 Python files (seed_data.py, import_highways.py)
+User Input Points:       3 API endpoints
+Real-time Updates:       Weather data (every 1-6 hours)
+Historical Lookback:     7-day window for incidents
+Processing Frequency:    Per-request (sub-second)
+
+================================================================================
+END OF FLOWCHART & DATA SOURCES MAP
+================================================================================

@@ -1,0 +1,349 @@
+{% extends "base.html" %}
+{% block title %}NER Logistics Intelligence Platform - Field Reports{% endblock %}
+{% block page_title %}Field Reports{% endblock %}
+
+{% block content %}
+<div class="stats-grid">
+    <div class="stat-card slide-in">
+        <div class="stat-icon blue"><i class="fas fa-clipboard-list"></i></div>
+        <div class="stat-info">
+            <h4 id="report-total">--</h4>
+            <p>Total Reports</p>
+            <div class="stat-trend down" id="report-total-trend">--</div>
+        </div>
+    </div>
+
+    <div class="stat-card slide-in" style="animation-delay:0.1s">
+        <div class="stat-icon red"><i class="fas fa-exclamation-triangle"></i></div>
+        <div class="stat-info">
+            <h4 id="report-critical">--</h4>
+            <p>Critical</p>
+            <div class="stat-trend up" id="report-critical-trend">--</div>
+        </div>
+    </div>
+
+    <div class="stat-card slide-in" style="animation-delay:0.2s">
+        <div class="stat-icon green"><i class="fas fa-check-circle"></i></div>
+        <div class="stat-info">
+            <h4 id="report-verified">--</h4>
+            <p>Verified</p>
+            <div class="stat-trend down" id="report-verified-trend">--</div>
+        </div>
+    </div>
+
+    <div class="stat-card slide-in" style="animation-delay:0.3s">
+        <div class="stat-icon orange"><i class="fas fa-clock"></i></div>
+        <div class="stat-info">
+            <h4 id="report-pending">--</h4>
+            <p>Pending</p>
+            <div class="stat-trend up" id="report-pending-trend">--</div>
+        </div>
+    </div>
+</div>
+
+<div class="grid-2">
+    <div class="card slide-in">
+        <div class="card-header">
+            <h3><i class="fas fa-edit"></i> Submit Field Report</h3>
+        </div>
+        <div class="card-body">
+            <div class="form-group">
+                <label for="report-title">Title</label>
+                <input id="report-title" class="form-control" placeholder="Road damage near bridge" />
+            </div>
+
+            <div class="form-group">
+                <label for="report-type">Report Type</label>
+                <select id="report-type" class="form-control">
+                    <option value="road_damage">Road Damage</option>
+                    <option value="bridge_issue">Bridge Issue</option>
+                    <option value="flood_alert">Flood Alert</option>
+                    <option value="landslide_warning">Landslide Warning</option>
+                    <option value="traffic_block">Traffic Block</option>
+                    <option value="other">Other</option>
+                </select>
+            </div>
+
+            <div class="form-group">
+                <label for="report-severity">Severity</label>
+                <select id="report-severity" class="form-control">
+                    <option value="low">Low</option>
+                    <option value="medium" selected>Medium</option>
+                    <option value="high">High</option>
+                    <option value="critical">Critical</option>
+                </select>
+            </div>
+
+            <div class="form-group">
+                <label for="report-location">Location</label>
+                <input id="report-location" class="form-control" placeholder="e.g. NH-52, Tawang" />
+            </div>
+
+            <div class="form-group">
+                <label for="report-description">Description</label>
+                <textarea id="report-description" class="form-control" rows="4" placeholder="Describe the incident in detail..."></textarea>
+            </div>
+
+            <div class="form-group">
+                <label for="report-photo">Image Proof <span style="color:var(--danger);">*</span></label>
+                <input id="report-photo" class="form-control" type="file" accept="image/*" required onchange="previewReportPhoto(event)" />
+                <div id="report-photo-preview" style="display:none; margin-top:10px;"></div>
+                <small style="color:var(--gray);">Upload a photo showing the reported road, bridge, weather, or incident.</small>
+            </div>
+
+            <div class="form-group">
+                <label for="report-reported-by">Reported By</label>
+                <input id="report-reported-by" class="form-control" placeholder="Officer / Volunteer name" />
+            </div>
+
+            <button class="btn btn-primary" onclick="submitReport()">
+                <i class="fas fa-paper-plane"></i> Submit Report
+            </button>
+        </div>
+    </div>
+
+    <div class="card slide-in" style="animation-delay:0.1s">
+        <div class="card-header">
+            <h3><i class="fas fa-map-marked-alt"></i> Report Distribution</h3>
+        </div>
+        <div class="card-body" id="report-distribution">
+            <div class="loading"><div class="spinner"></div>Loading report analytics...</div>
+        </div>
+    </div>
+</div>
+
+<div class="card slide-in" style="margin-top:20px;">
+    <div class="card-header">
+        <h3><i class="fas fa-table"></i> Recent Reports</h3>
+        <div class="filters">
+            <select class="filter-select" id="report-status-filter">
+                <option value="all">All Status</option>
+                <option value="pending">Pending</option>
+                <option value="verified">Verified</option>
+                <option value="resolved">Resolved</option>
+            </select>
+        </div>
+    </div>
+    <div class="card-body">
+        <div style="overflow-x:auto;">
+            <table class="data-table" id="reports-table">
+                <thead>
+                    <tr>
+                        <th>Title</th>
+                        <th>Type</th>
+                        <th>Location</th>
+                        <th>Severity</th>
+                        <th>Status</th>
+                        <th>Reported By</th>
+                            <th>Proof</th>
+                            <th>Action</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr><td colspan="8" style="text-align:center; color:var(--gray);">Loading recent reports...</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+let reportData = [];
+
+async function loadReports() {
+    try {
+        const res = await fetch('/api/field-reports');
+        reportData = await res.json();
+        renderSummary();
+        renderDistribution();
+        renderTable();
+    } catch (error) {
+        console.error('Failed to load reports:', error);
+        document.getElementById('report-distribution').innerHTML = '<p style="color:var(--gray);">Unable to load field reports.</p>';
+    }
+}
+
+function renderSummary() {
+    const total = reportData.length;
+    const critical = reportData.filter(r => String(r.severity || '').toLowerCase() === 'critical').length;
+    const verified = reportData.filter(r => r.verified === true || String(r.status || '').toLowerCase() === 'verified').length;
+    const pending = total - verified;
+
+    document.getElementById('report-total').textContent = total;
+    document.getElementById('report-total-trend').textContent = `${total} live entries`;
+
+    document.getElementById('report-critical').textContent = critical;
+    document.getElementById('report-critical-trend').textContent = `${Math.round((critical / Math.max(total, 1)) * 100)}% critical`;
+
+    document.getElementById('report-verified').textContent = verified;
+    document.getElementById('report-verified-trend').textContent = `${Math.round((verified / Math.max(total, 1)) * 100)}% verified`;
+
+    document.getElementById('report-pending').textContent = pending;
+    document.getElementById('report-pending-trend').textContent = `${Math.round((pending / Math.max(total, 1)) * 100)}% pending`;
+}
+
+function renderDistribution() {
+    const container = document.getElementById('report-distribution');
+    const reportTypes = ['road_damage', 'bridge_issue', 'flood_alert', 'landslide_warning', 'traffic_block', 'other'];
+    const counts = reportTypes.map(type => ({
+        type,
+        count: reportData.filter(r => (r.report_type || '').toLowerCase() === type).length
+    }));
+
+    container.innerHTML = counts.map(item => `
+        <div style="margin-bottom:14px;">
+            <div style="display:flex; justify-content:space-between; margin-bottom:4px; font-size:0.8rem; color:var(--gray);">
+                <span>${formatType(item.type)}</span>
+                <span>${item.count}</span>
+            </div>
+            <div class="progress">
+                <div class="progress-bar ${item.count > 0 ? 'success' : 'warning'}" style="width:${(item.count / Math.max(reportData.length, 1)) * 100}%"></div>
+            </div>
+        </div>
+    `).join('');
+}
+
+function renderTable() {
+    const filter = document.getElementById('report-status-filter');
+    const selected = filter ? filter.value : 'all';
+    const rows = reportData.filter(r => {
+        if (selected === 'all') return true;
+        const status = String(r.status || (r.verified ? 'verified' : 'pending')).toLowerCase();
+        return status === selected;
+    });
+
+    const tbody = document.querySelector('#reports-table tbody');
+    if (!tbody) return;
+
+    if (!rows.length) {
+        tbody.innerHTML = '<tr><td colspan="8" style="text-align:center; color:var(--gray);">No reports in this selection.</td></tr>';
+        return;
+    }
+
+    tbody.innerHTML = rows.map(r => {
+        const status = String(r.status || (r.verified ? 'verified' : 'pending')).toLowerCase();
+        const severity = String(r.severity || 'medium').toLowerCase();
+        const statusClass = status === 'verified' ? 'success' : status === 'resolved' ? 'info' : status === 'pending' ? 'warning' : 'danger';
+        const severityClass = severity === 'critical' ? 'danger' : severity === 'high' ? 'warning' : severity === 'low' ? 'success' : 'info';
+
+        return `
+            <tr>
+                <td><strong>${r.title || 'Untitled Report'}</strong><br><span style="font-size:0.75rem; color:var(--gray);">${r.description || 'No description'}</span></td>
+                <td>${formatType(r.report_type || 'other')}</td>
+                <td>${r.location_name || 'Unknown'}</td>
+                <td><span class="badge badge-${severityClass}">${severity.toUpperCase()}</span></td>
+                <td><span class="badge badge-${statusClass}">${status.toUpperCase()}</span></td>
+                <td>${r.reported_by || 'Unknown'}</td>
+                <td>${r.photo_url ? `<a href="${r.photo_url}" target="_blank" rel="noopener"><img src="${r.photo_url}" alt="Report proof" style="width:52px; height:40px; object-fit:cover; border-radius:6px;"></a>` : '<span style="color:var(--danger);">Missing</span>'}</td>
+                <td>
+                    <button class="btn btn-outline" style="padding:6px 10px; font-size:0.75rem;" onclick="verifyReport(${r.id})">
+                        <i class="fas fa-check"></i> Verify
+                    </button>
+                </td>
+            </tr>
+        `;
+    }).join('');
+}
+
+async function verifyReport(reportId) {
+    try {
+        const res = await fetch(`/api/field-reports/${reportId}/verify`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ verified_by: 'System Admin', status: 'verified' })
+        });
+
+        if (!res.ok) throw new Error('Verification failed');
+        loadReports();
+    } catch (error) {
+        console.error(error);
+        alert('Unable to verify report.');
+    }
+}
+
+async function submitReport() {
+    const photoInput = document.getElementById('report-photo');
+    const photoFile = photoInput.files[0];
+    const payload = {
+        report_type: document.getElementById('report-type').value,
+        title: document.getElementById('report-title').value.trim(),
+        description: document.getElementById('report-description').value.trim(),
+        lat: 26.1445 + Math.random() * 0.5,
+        lng: 91.7362 + Math.random() * 0.5,
+        location_name: document.getElementById('report-location').value.trim() || 'Unknown location',
+        severity: document.getElementById('report-severity').value,
+        reported_by: document.getElementById('report-reported-by').value.trim() || 'Field Officer',
+        reporter_phone: '',
+        reporter_designation: 'Field Safety Team'
+    };
+
+    if (!payload.title || !payload.description || !photoFile) {
+        alert('Please fill in the report title and description and attach image proof.');
+        return;
+    }
+
+    try {
+        const uploadData = new FormData();
+        uploadData.append('file', photoFile);
+        const uploadResponse = await fetch('/api/upload', { method: 'POST', body: uploadData });
+        const uploaded = await uploadResponse.json();
+        if (!uploadResponse.ok || !uploaded.url) throw new Error(uploaded.error || 'Image upload failed');
+        payload.photo_url = uploaded.url;
+
+        const res = await fetch('/api/field-reports', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+
+        if (!res.ok) throw new Error('Create report failed');
+        document.getElementById('report-title').value = '';
+        document.getElementById('report-description').value = '';
+        document.getElementById('report-location').value = '';
+        document.getElementById('report-reported-by').value = '';
+        photoInput.value = '';
+        document.getElementById('report-photo-preview').innerHTML = '';
+        document.getElementById('report-photo-preview').style.display = 'none';
+        loadReports();
+    } catch (error) {
+        console.error(error);
+        alert('Unable to submit report.');
+    }
+}
+
+function previewReportPhoto(event) {
+    const file = event.target.files[0];
+    const preview = document.getElementById('report-photo-preview');
+    if (!file) {
+        preview.innerHTML = '';
+        preview.style.display = 'none';
+        return;
+    }
+
+    const imageUrl = URL.createObjectURL(file);
+    preview.innerHTML = `<img src="${imageUrl}" alt="Selected image proof" style="max-width:220px; max-height:150px; object-fit:cover; border-radius:8px; border:1px solid var(--border);">`;
+    preview.style.display = 'block';
+}
+
+function formatType(value) {
+    const map = {
+        road_damage: 'Road Damage',
+        bridge_issue: 'Bridge Issue',
+        flood_alert: 'Flood Alert',
+        landslide_warning: 'Landslide Warning',
+        traffic_block: 'Traffic Block',
+        other: 'Other'
+    };
+    return map[value] || value || 'Other';
+}
+
+const filterSelect = document.getElementById('report-status-filter');
+if (filterSelect) {
+    filterSelect.addEventListener('change', renderTable);
+}
+
+loadReports();
+</script>
+{% endblock %}

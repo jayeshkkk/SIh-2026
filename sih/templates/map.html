@@ -1,0 +1,335 @@
+{% extends "base.html" %}
+{% block title %}NER Logistics Intelligence Platform - GIS Map{% endblock %}
+{% block page_title %}GIS Map{% endblock %}
+
+{% block content %}
+<div class="card slide-in">
+    <div class="card-header">
+        <h3><i class="fas fa-map-marked-alt"></i> NER Road Network & Logistics Map</h3>
+        <div class="filters">
+            <select class="filter-select" id="district-filter">
+                <option value="all">All Districts</option>
+            </select>
+            <select class="filter-select" id="layer-filter">
+                <option value="all">All Layers</option>
+                <option value="roads">Roads</option>
+                <option value="bridges">Bridges</option>
+                <option value="vehicles">Vehicles</option>
+                <option value="reports">Field Reports</option>
+                <option value="alerts">Alerts</option>
+            </select>
+        </div>
+    </div>
+    <div class="card-body" style="padding:0;">
+        <div id="map" class="map-container"></div>
+    </div>
+</div>
+
+<div class="grid-2" style="margin-top:20px;">
+    <div class="card slide-in">
+        <div class="card-header">
+            <h3><i class="fas fa-list"></i> Active Incidents</h3>
+        </div>
+        <div class="card-body" id="incident-summary">
+            <div class="loading"><div class="spinner"></div>Loading incidents...</div>
+        </div>
+    </div>
+
+    <div class="card slide-in" style="animation-delay:0.1s">
+        <div class="card-header">
+            <h3><i class="fas fa-truck"></i> Vehicle Fleet Status</h3>
+        </div>
+        <div class="card-body" id="fleet-status">
+            <div class="loading"><div class="spinner"></div>Loading fleet...</div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+let map;
+let layerGroups = {};
+let allData = {districts: [], roads: [], bridges: [], vehicles: [], field_reports: [], alerts: [], weather: []};
+
+async function loadMapData() {
+    try {
+        const res = await fetch('/api/map/all');
+        allData = await res.json();
+        initMap();
+        populateDistrictFilter();
+        renderIncidentSummary();
+        renderFleetStatus();
+    } catch (error) {
+        console.error('Map data load failed:', error);
+        document.getElementById('incident-summary').innerHTML = '<p style="color:var(--gray);">Unable to load map data.</p>';
+    }
+}
+
+function initMap() {
+    if (map) {
+        map.remove();
+    }
+
+    map = L.map('map').setView([25.5, 92.5], 6);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '&copy; OpenStreetMap contributors'
+    }).addTo(map);
+
+    layerGroups = {
+        roads: L.layerGroup().addTo(map),
+        bridges: L.layerGroup().addTo(map),
+        vehicles: L.layerGroup().addTo(map),
+        reports: L.layerGroup().addTo(map),
+        alerts: L.layerGroup().addTo(map),
+        districts: L.layerGroup().addTo(map)
+    };
+
+    drawDistrictMarkers();
+    drawRoads();
+    drawBridges();
+    drawVehicles();
+    drawReports();
+    drawAlerts();
+    applyLayerFilter();
+}
+
+function populateDistrictFilter() {
+    const filter = document.getElementById('district-filter');
+    if (!filter) return;
+
+    const districts = allData.districts || [];
+    filter.innerHTML = '<option value="all">All Districts</option>' + districts.map(d => 
+        `<option value="${d.id}">${d.name}</option>`
+    ).join('');
+
+    filter.onchange = () => {
+        const districtId = filter.value;
+        if (districtId === 'all') {
+            map.setView([25.5, 92.5], 6);
+            return;
+        }
+
+        const district = allData.districts.find(d => String(d.id) === String(districtId));
+        if (district) {
+            map.setView([district.lat, district.lng], 8);
+        }
+    };
+}
+
+function applyLayerFilter() {
+    const filter = document.getElementById('layer-filter');
+    if (!filter) return;
+
+    const selected = filter.value;
+    Object.keys(layerGroups).forEach(key => {
+        if (key === 'districts' || key === 'roads' || key === 'bridges' || key === 'vehicles' || key === 'reports' || key === 'alerts') {
+            const group = layerGroups[key];
+            if (!group) return;
+            if (selected === 'all' || selected === key) {
+                group.addTo(map);
+            } else {
+                group.remove();
+            }
+        }
+    });
+}
+
+document.getElementById('layer-filter')?.addEventListener('change', applyLayerFilter);
+
+function drawDistrictMarkers() {
+    const districts = allData.districts || [];
+    districts.forEach(d => {
+        const color = (d.connectivity_status || '').toLowerCase() === 'critical' ? '#e74c3c' :
+            (d.connectivity_status || '').toLowerCase() === 'warning' ? '#f39c12' : '#27ae60';
+
+        const marker = L.circleMarker([d.lat, d.lng], {
+            radius: 10,
+            color: '#fff',
+            weight: 2,
+            fillColor: color,
+            fillOpacity: 0.9
+        }).bindPopup(`
+            <strong>${d.name}</strong><br>
+            ${d.state}<br>
+            Roads: ${d.road_count || 0}<br>
+            Bridges: ${d.bridge_count || 0}
+        `);
+
+        marker.addTo(layerGroups.districts);
+    });
+}
+
+function drawRoads() {
+    const roads = allData.roads || [];
+    roads.forEach(r => {
+        const color = r.status === 'blocked' ? '#e74c3c' : r.condition === 'poor' ? '#f39c12' : '#27ae60';
+        const polyline = L.polyline([
+            [r.from_lat, r.from_lng],
+            [r.to_lat, r.to_lng]
+        ], {
+            color,
+            weight: 5,
+            opacity: 0.9
+        }).bindPopup(`
+            <strong>${r.name}</strong><br>
+            ${r.from_location} → ${r.to_location}<br>
+            Status: ${r.status}<br>
+            Condition: ${r.condition}
+        `);
+
+        polyline.addTo(layerGroups.roads);
+    });
+}
+
+function drawBridges() {
+    const bridges = allData.bridges || [];
+    bridges.forEach(b => {
+        const color = b.status === 'critical' ? '#e74c3c' : b.status === 'maintenance' ? '#f39c12' : '#3498db';
+
+        const marker = L.circleMarker([b.lat, b.lng], {
+            radius: 7,
+            color: '#fff',
+            weight: 2,
+            fillColor: color,
+            fillOpacity: 0.9
+        }).bindPopup(`
+            <strong>${b.name}</strong><br>
+            Condition: ${b.condition}<br>
+            Status: ${b.status}<br>
+            Capacity: ${b.load_capacity_tons || 0} tons
+        `);
+
+        marker.addTo(layerGroups.bridges);
+    });
+}
+
+function drawVehicles() {
+    const vehicles = allData.vehicles || [];
+    vehicles.forEach(v => {
+        if (!v.current_lat || !v.current_lng) return;
+
+        const color = v.status === 'active' ? '#27ae60' : v.status === 'delayed' ? '#f39c12' : '#e74c3c';
+        const icon = L.divIcon({
+            className: 'vehicle-marker',
+            html: `<div style="background:${color}; width:14px; height:14px; border-radius:50%; border:2px solid white; box-shadow:0 2px 4px rgba(0,0,0,0.3);"></div>`,
+            iconSize: [14, 14]
+        });
+
+        L.marker([v.current_lat, v.current_lng], { icon }).bindPopup(`
+            <strong>${v.vehicle_number}</strong><br>
+            Cargo: ${v.cargo_type || 'General'}<br>
+            Route: ${v.origin || 'Origin'} → ${v.destination || 'Destination'}<br>
+            Status: ${v.status}
+        `).addTo(layerGroups.vehicles);
+    });
+}
+
+function drawReports() {
+    const reports = allData.field_reports || [];
+    reports.forEach(r => {
+        const color = r.severity === 'critical' ? '#e74c3c' : r.severity === 'high' ? '#f39c12' : '#3498db';
+
+        L.circleMarker([r.lat, r.lng], {
+            radius: 7,
+            color: color,
+            weight: 2,
+            fillColor: color,
+            fillOpacity: 0.8
+        }).bindPopup(`
+            <strong>${r.title}</strong><br>
+            Type: ${r.report_type}<br>
+            Severity: ${r.severity}<br>
+            Status: ${r.status}
+        `).addTo(layerGroups.reports);
+    });
+}
+
+function drawAlerts() {
+    const alerts = allData.alerts || [];
+    alerts.forEach(a => {
+        const color = a.severity === 'critical' ? '#e74c3c' : a.severity === 'high' ? '#f39c12' : '#3498db';
+
+        L.circleMarker([a.lat, a.lng], {
+            radius: 8,
+            color: '#fff',
+            weight: 2,
+            fillColor: color,
+            fillOpacity: 0.9
+        }).bindPopup(`
+            <strong>${a.title}</strong><br>
+            ${a.message || a.alert_type}<br>
+            Severity: ${a.severity}
+        `).addTo(layerGroups.alerts);
+    });
+}
+
+function renderIncidentSummary() {
+    const container = document.getElementById('incident-summary');
+    const incidents = [
+        ...(allData.alerts || []).slice(0, 3).map(a => ({
+            title: a.title,
+            type: 'Alert',
+            severity: a.severity,
+            location: a.location_name || 'N/A'
+        })),
+        ...(allData.field_reports || []).slice(0, 3).map(r => ({
+            title: r.title,
+            type: 'Report',
+            severity: r.severity,
+            location: r.location_name || 'N/A'
+        })),
+        ...(allData.roads || []).filter(r => r.status === 'blocked').slice(0, 3).map(r => ({
+            title: r.name,
+            type: 'Road Block',
+            severity: 'critical',
+            location: `${r.from_location} → ${r.to_location}`
+        }))
+    ].slice(0, 6);
+
+    if (!incidents.length) {
+        container.innerHTML = '<p style="color:var(--gray);">No active incidents.</p>';
+        return;
+    }
+
+    container.innerHTML = incidents.map(i => `
+        <div class="alert-item ${i.severity === 'critical' ? 'critical' : i.severity === 'high' ? 'high' : 'medium'}" style="margin-bottom:10px;">
+            <div class="alert-icon"><i class="fas ${i.type === 'Road Block' ? 'fa-road' : i.type === 'Alert' ? 'fa-bell' : 'fa-clipboard-list'}"></i></div>
+            <div class="alert-content">
+                <h4>${i.title}</h4>
+                <p>${i.type} • ${i.location}</p>
+                <div class="alert-meta">
+                    <span class="badge badge-${i.severity === 'critical' ? 'danger' : i.severity === 'high' ? 'warning' : 'info'}">${(i.severity || 'medium').toUpperCase()}</span>
+                </div>
+            </div>
+        </div>
+    `).join('');
+}
+
+function renderFleetStatus() {
+    const container = document.getElementById('fleet-status');
+    const vehicles = (allData.vehicles || []).slice(0, 5);
+
+    if (!vehicles.length) {
+        container.innerHTML = '<p style="color:var(--gray);">No vehicle data available.</p>';
+        return;
+    }
+
+    container.innerHTML = vehicles.map(v => `
+        <div class="vehicle-card" style="margin-bottom:12px;">
+            <div class="vehicle-header">
+                <div class="vehicle-number">${v.vehicle_number}</div>
+                <span class="badge badge-${v.status === 'active' ? 'success' : v.status === 'delayed' ? 'warning' : 'danger'}">${(v.status || 'unknown').toUpperCase()}</span>
+            </div>
+            <div class="vehicle-route">${v.origin || 'Origin'} → ${v.destination || 'Destination'}</div>
+            <div class="vehicle-meta">
+                <span><i class="fas fa-box"></i> ${v.cargo_type || 'General'}</span>
+                <span><i class="fas fa-tachometer-alt"></i> ${v.speed_kmh || 0} km/h</span>
+            </div>
+        </div>
+    `).join('');
+}
+
+loadMapData();
+</script>
+{% endblock %}

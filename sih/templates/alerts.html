@@ -1,0 +1,248 @@
+{% extends "base.html" %}
+{% block title %}NER Logistics Intelligence Platform - Alerts{% endblock %}
+{% block page_title %}Alerts{% endblock %}
+
+{% block content %}
+<div class="stats-grid">
+    <div class="stat-card slide-in">
+        <div class="stat-icon red"><i class="fas fa-bell"></i></div>
+        <div class="stat-info">
+            <h4 id="alert-total">--</h4>
+            <p>Active Alerts</p>
+            <div class="stat-trend up" id="alert-total-trend">--</div>
+        </div>
+    </div>
+
+    <div class="stat-card slide-in" style="animation-delay:0.1s">
+        <div class="stat-icon orange"><i class="fas fa-exclamation-triangle"></i></div>
+        <div class="stat-info">
+            <h4 id="alert-critical">--</h4>
+            <p>Critical</p>
+            <div class="stat-trend up" id="alert-critical-trend">--</div>
+        </div>
+    </div>
+
+    <div class="stat-card slide-in" style="animation-delay:0.2s">
+        <div class="stat-icon blue"><i class="fas fa-clipboard-check"></i></div>
+        <div class="stat-info">
+            <h4 id="alert-high">--</h4>
+            <p>High Priority</p>
+            <div class="stat-trend down" id="alert-high-trend">--</div>
+        </div>
+    </div>
+
+    <div class="stat-card slide-in" style="animation-delay:0.3s">
+        <div class="stat-icon green"><i class="fas fa-check-circle"></i></div>
+        <div class="stat-info">
+            <h4 id="alert-resolved">--</h4>
+            <p>Resolved</p>
+            <div class="stat-trend down" id="alert-resolved-trend">--</div>
+        </div>
+    </div>
+</div>
+
+<div class="card slide-in">
+    <div class="card-header">
+        <h3><i class="fas fa-plus-circle"></i> Create Alert</h3>
+    </div>
+    <div class="card-body">
+        <div class="grid-2">
+            <div class="form-group">
+                <label for="alert-title">Title</label>
+                <input id="alert-title" class="form-control" placeholder="Flood warning in Bhalukpong" />
+            </div>
+            <div class="form-group">
+                <label for="alert-type">Alert Type</label>
+                <select id="alert-type" class="form-control">
+                    <option value="flood_alert">Flood Alert</option>
+                    <option value="landslide_warning">Landslide Warning</option>
+                    <option value="road_block">Road Block</option>
+                    <option value="bridge_issue">Bridge Issue</option>
+                    <option value="weather">Weather</option>
+                    <option value="other">Other</option>
+                </select>
+            </div>
+        </div>
+
+        <div class="grid-2">
+            <div class="form-group">
+                <label for="alert-severity">Severity</label>
+                <select id="alert-severity" class="form-control">
+                    <option value="low">Low</option>
+                    <option value="medium">Medium</option>
+                    <option value="high">High</option>
+                    <option value="critical" selected>Critical</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="alert-location">Location</label>
+                <input id="alert-location" class="form-control" placeholder="e.g. Tawang District" />
+            </div>
+        </div>
+
+        <div class="form-group">
+            <label for="alert-message">Message</label>
+            <textarea id="alert-message" class="form-control" rows="4" placeholder="Alert details ..."></textarea>
+        </div>
+
+        <button class="btn btn-primary" onclick="submitAlert()">
+            <i class="fas fa-bullhorn"></i> Publish Alert
+        </button>
+    </div>
+</div>
+
+<div class="card slide-in" style="margin-top:20px;">
+    <div class="card-header">
+        <h3><i class="fas fa-list"></i> Active Alert Feed</h3>
+        <div class="filters">
+            <select class="filter-select" id="alert-severity-filter">
+                <option value="all">All Severity</option>
+                <option value="critical">Critical</option>
+                <option value="high">High</option>
+                <option value="medium">Medium</option>
+                <option value="low">Low</option>
+            </select>
+        </div>
+    </div>
+    <div class="card-body" id="alerts-feed">
+        <div class="loading"><div class="spinner"></div>Loading alerts...</div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+let alertData = [];
+
+async function loadAlerts() {
+    try {
+        const res = await fetch('/api/alerts?status=active');
+        alertData = await res.json();
+        renderSummary();
+        renderFeed();
+    } catch (error) {
+        console.error('Failed to load alerts:', error);
+        document.getElementById('alerts-feed').innerHTML = '<p style="color:var(--gray);">Unable to load alerts.</p>';
+    }
+}
+
+function renderSummary() {
+    const total = alertData.length;
+    const critical = alertData.filter(a => String(a.severity || '').toLowerCase() === 'critical').length;
+    const high = alertData.filter(a => String(a.severity || '').toLowerCase() === 'high').length;
+    const resolved = 0;
+
+    document.getElementById('alert-total').textContent = total;
+    document.getElementById('alert-total-trend').textContent = `${total} active`;
+
+    document.getElementById('alert-critical').textContent = critical;
+    document.getElementById('alert-critical-trend').textContent = `${Math.round((critical / Math.max(total, 1)) * 100)}% critical`;
+
+    document.getElementById('alert-high').textContent = high;
+    document.getElementById('alert-high-trend').textContent = `${Math.round((high / Math.max(total, 1)) * 100)}% high priority`;
+
+    document.getElementById('alert-resolved').textContent = resolved;
+    document.getElementById('alert-resolved-trend').textContent = '0 today';
+}
+
+function renderFeed() {
+    const filter = document.getElementById('alert-severity-filter');
+    const selected = filter ? filter.value : 'all';
+    const alerts = alertData.filter(alert => {
+        if (selected === 'all') return true;
+        return String(alert.severity || '').toLowerCase() === selected;
+    });
+
+    const container = document.getElementById('alerts-feed');
+    if (!alerts.length) {
+        container.innerHTML = '<p style="color:var(--gray);">No alerts match the selected filter.</p>';
+        return;
+    }
+
+    container.innerHTML = alerts.map(alert => `
+        <div class="alert-item ${alert.severity === 'critical' ? 'critical' : alert.severity === 'high' ? 'high' : alert.severity === 'medium' ? 'medium' : 'low'}" style="margin-bottom:12px;">
+            <div class="alert-icon"><i class="fas ${alert.alert_type === 'road_block' ? 'fa-road' : alert.alert_type === 'bridge_issue' ? 'fa-bridge' : alert.alert_type === 'flood_alert' ? 'fa-water' : alert.alert_type === 'landslide_warning' ? 'fa-mountain' : 'fa-bell'}"></i></div>
+            <div class="alert-content" style="flex:1;">
+                <h4>${alert.title || 'Alert'}</h4>
+                <p>${alert.message || 'No message provided.'}</p>
+                <div class="alert-meta">
+                    <span class="badge badge-${alert.severity === 'critical' ? 'danger' : alert.severity === 'high' ? 'warning' : alert.severity === 'medium' ? 'info' : 'success'}">${(alert.severity || 'medium').toUpperCase()}</span>
+                    <span style="margin-left:8px;">
+                        <i class="fas fa-map-marker-alt"></i> ${alert.location_name || 'Unknown area'}
+                    </span>
+                    <span style="margin-left:8px;">
+                        <i class="fas fa-clock"></i> ${formatTime(alert.created_at || new Date().toISOString())}
+                    </span>
+                </div>
+            </div>
+            <div>
+                <button class="btn btn-outline" style="padding:6px 10px; font-size:0.75rem;" onclick="resolveAlert(${alert.id})">
+                    <i class="fas fa-check"></i> Resolve
+                </button>
+            </div>
+        </div>
+    `).join('');
+}
+
+async function submitAlert() {
+    const payload = {
+        alert_type: document.getElementById('alert-type').value,
+        title: document.getElementById('alert-title').value.trim(),
+        message: document.getElementById('alert-message').value.trim(),
+        severity: document.getElementById('alert-severity').value,
+        location_name: document.getElementById('alert-location').value.trim() || 'Unknown location',
+        affected_districts: document.getElementById('alert-location').value.trim() || 'N/A',
+        source: 'Field Operations'
+    };
+
+    if (!payload.title || !payload.message) {
+        alert('Please add both title and message.');
+        return;
+    }
+
+    try {
+        const res = await fetch('/api/alerts', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+
+        if (!res.ok) throw new Error('Create alert failed');
+        document.getElementById('alert-title').value = '';
+        document.getElementById('alert-message').value = '';
+        document.getElementById('alert-location').value = '';
+        loadAlerts();
+    } catch (error) {
+        console.error(error);
+        alert('Unable to publish alert.');
+    }
+}
+
+async function resolveAlert(alertId) {
+    try {
+        const res = await fetch(`/api/alerts/${alertId}/resolve`, { method: 'PUT' });
+        if (!res.ok) throw new Error('Resolve alert failed');
+        loadAlerts();
+    } catch (error) {
+        console.error(error);
+        alert('Unable to resolve alert.');
+    }
+}
+
+function formatTime(timestamp) {
+    if (!timestamp) return 'Now';
+    const diff = Math.max(0, Math.floor((new Date() - new Date(timestamp)) / 60000));
+    if (diff < 1) return 'just now';
+    if (diff < 60) return `${diff}m ago`;
+    if (diff < 1440) return `${Math.floor(diff / 60)}h ago`;
+    return `${Math.floor(diff / 1440)}d ago`;
+}
+
+const filterSelect = document.getElementById('alert-severity-filter');
+if (filterSelect) {
+    filterSelect.addEventListener('change', renderFeed);
+}
+
+loadAlerts();
+</script>
+{% endblock %}

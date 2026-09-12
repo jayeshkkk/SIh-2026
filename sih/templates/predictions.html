@@ -1,0 +1,362 @@
+{% extends "base.html" %}
+{% block title %}NER Logistics Intelligence Platform - AI Predictions{% endblock %}
+{% block page_title %}AI Predictions{% endblock %}
+
+{% block content %}
+<div class="stats-grid">
+    <div class="stat-card slide-in">
+        <div class="stat-icon purple"><i class="fas fa-brain"></i></div>
+        <div class="stat-info">
+            <h4 id="prediction-count">--</h4>
+            <p>Predicted Disruptions</p>
+            <div class="stat-trend up" id="prediction-trend">--</div>
+        </div>
+    </div>
+
+    <div class="stat-card slide-in" style="animation-delay:0.1s">
+        <div class="stat-icon red"><i class="fas fa-exclamation-triangle"></i></div>
+        <div class="stat-info">
+            <h4 id="high-risk-count">--</h4>
+            <p>High Risk Segments</p>
+            <div class="stat-trend up" id="high-risk-trend">--</div>
+        </div>
+    </div>
+
+    <div class="stat-card slide-in" style="animation-delay:0.2s">
+        <div class="stat-icon orange"><i class="fas fa-cloud-rain"></i></div>
+        <div class="stat-info">
+            <h4 id="weather-risk-count">--</h4>
+            <p>Weather Impacted Routes</p>
+            <div class="stat-trend down" id="weather-risk-trend">--</div>
+        </div>
+    </div>
+
+    <div class="stat-card slide-in" style="animation-delay:0.3s">
+        <div class="stat-icon blue"><i class="fas fa-clock"></i></div>
+        <div class="stat-info">
+            <h4 id="forecast-window">24h</h4>
+            <p>Forecast Window</p>
+            <div class="stat-trend down" id="forecast-trend">Updated live</div>
+        </div>
+    </div>
+</div>
+
+<div class="card slide-in" id="selected-route-card" style="display:none; margin-top:20px;">
+    <div class="card-header">
+        <h3><i class="fas fa-route"></i> Selected Route Prediction</h3>
+    </div>
+    <div class="card-body" id="selected-route-prediction"></div>
+</div>
+
+<div class="grid-2">
+    <div class="card slide-in">
+        <div class="card-header">
+            <h3><i class="fas fa-chart-bar"></i> Risk Distribution</h3>
+        </div>
+        <div class="card-body" id="risk-distribution-container">
+            <div class="loading"><div class="spinner"></div>Loading risk model...</div>
+        </div>
+    </div>
+
+    <div class="card slide-in" style="animation-delay:0.1s">
+        <div class="card-header">
+            <h3><i class="fas fa-triangle-exclamation"></i> Route Alerts</h3>
+        </div>
+            <div class="card-body" id="route-alerts-container">
+                <div class="loading"><div class="spinner"></div>Loading route alerts...</div>
+        </div>
+    </div>
+</div>
+
+<div class="card slide-in" style="margin-top:20px;">
+    <div class="card-header">
+        <h3><i class="fas fa-table"></i> Predicted Disruption Table</h3>
+        <div class="filters">
+            <select class="filter-select" id="prediction-filter">
+                <option value="all">All Severity</option>
+                <option value="high">High</option>
+                <option value="medium">Medium</option>
+                <option value="low">Low</option>
+            </select>
+        </div>
+    </div>
+    <div class="card-body">
+        <div style="overflow-x:auto;">
+            <table class="data-table" id="predictions-table">
+                <thead>
+                    <tr>
+                        <th>Route</th>
+                        <th>Disruption</th>
+                        <th>Risk</th>
+                        <th>Confidence</th>
+                        <th>Delay</th>
+                        <th>Action</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr><td colspan="6" style="text-align:center; color:var(--gray);">Loading prediction data...</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+let forecastData = [];
+let selectedRoute = null;
+let lastPredictionUpdate = null;
+
+async function loadPredictions() {
+    try {
+        const res = await fetch(`/api/predictions/disruptions?hours=24&_=${Date.now()}`, { cache: 'no-store' });
+        const data = await res.json();
+        forecastData = data.predictions || [];
+        lastPredictionUpdate = data.generated_at || new Date().toISOString();
+        await refreshSelectedRoute();
+        renderSummary();
+        renderRiskDistribution();
+        renderRouteAlerts();
+        renderSelectedRoutePrediction();
+        renderPredictionTable();
+    } catch (error) {
+        console.error('Prediction load failed:', error);
+        document.getElementById('risk-distribution-container').innerHTML = '<p style="color:var(--gray);">Unable to load prediction data.</p>';
+    }
+}
+
+async function refreshSelectedRoute() {
+    if (!selectedRoute || !selectedRoute.path || selectedRoute.path.length < 2) return;
+
+    try {
+        const from = encodeURIComponent(selectedRoute.path[0]);
+        const to = encodeURIComponent(selectedRoute.path[selectedRoute.path.length - 1]);
+        const response = await fetch(`/api/routes/alternate?from=${from}&to=${to}&avoid_high_risk=false&_=${Date.now()}`, { cache: 'no-store' });
+        const data = await response.json();
+        const selectedRoads = (selectedRoute.segments || []).map(segment => segment.road_name).join('|');
+        const currentRoute = (data.routes || []).find(route =>
+            route.path.join('|') === selectedRoute.path.join('|') &&
+            route.segments.map(segment => segment.road_name).join('|') === selectedRoads
+        );
+        if (currentRoute) selectedRoute = currentRoute;
+    } catch (error) {
+        console.warn('Selected route refresh failed:', error);
+    }
+}
+
+function renderSelectedRoutePrediction() {
+    const card = document.getElementById('selected-route-card');
+    const container = document.getElementById('selected-route-prediction');
+    if (!card || !container || !selectedRoute) return;
+
+    const predictionsByRoad = new Map(forecastData.map(item => [item.road_name, item]));
+    const routeRisk = Number(selectedRoute.average_risk || 0);
+    const routeSeverity = selectedRoute.blocked || routeRisk >= 0.8 ? 'danger' : routeRisk >= 0.5 ? 'warning' : 'success';
+    const routeAlerts = getRouteAlerts();
+
+    card.style.display = 'block';
+    container.innerHTML = `
+        <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:16px; margin-bottom:14px;">
+            <div>
+                <div style="font-size:1.1rem; font-weight:700;">${selectedRoute.path.join(' → ')}</div>
+                <div style="color:var(--gray); margin-top:4px;">${selectedRoute.total_distance_km} km · ${selectedRoute.estimated_time_minutes} min · Live status</div>
+                <div style="font-size:0.75rem; color:var(--secondary); margin-top:3px;">Updated ${formatDate(lastPredictionUpdate)}</div>
+            </div>
+            <div style="display:flex; align-items:center; gap:10px;">
+                <span class="badge badge-${routeSeverity}">${selectedRoute.blocked ? 'BLOCKED' : 'RISK ' + routeRisk.toFixed(2)}</span>
+                <button class="btn btn-outline" type="button" onclick="openSelectedRouteInGoogleMaps()" title="Open selected route in Google Maps">
+                    <i class="fas fa-map-marked-alt"></i> Google Maps
+                </button>
+            </div>
+        </div>
+        <div style="display:grid; grid-template-columns:repeat(4, 1fr); gap:10px; margin-bottom:14px;">
+            <div class="stat-card" style="padding:10px; min-height:0;"><strong>${selectedRoute.route_score ?? 0}</strong><small style="display:block; color:var(--gray);">Total / 100</small></div>
+            <div class="stat-card" style="padding:10px; min-height:0;"><strong>${selectedRoute.safety_score ?? 0}</strong><small style="display:block; color:var(--gray);">Safety / 40</small></div>
+            <div class="stat-card" style="padding:10px; min-height:0;"><strong>${selectedRoute.cost_score ?? 0}</strong><small style="display:block; color:var(--gray);">Cost / 40</small></div>
+            <div class="stat-card" style="padding:10px; min-height:0;"><strong>${selectedRoute.speed_score ?? 0}</strong><small style="display:block; color:var(--gray);">Speed / 20</small></div>
+        </div>
+        <div style="margin-bottom:14px; padding:10px 12px; border-left:4px solid var(--${routeSeverity === 'danger' ? 'danger' : routeSeverity === 'warning' ? 'warning' : 'secondary'}); background:var(--hover-bg);">
+            <strong>Risk information:</strong> ${(selectedRoute.average_risk || 0).toFixed(2)} average risk · ${routeAlerts.length} alert${routeAlerts.length === 1 ? '' : 's'} · ${selectedRoute.blocked ? 'Route blocked' : 'Route available'}
+        </div>
+        <div style="display:flex; flex-direction:column; gap:8px;">
+            ${selectedRoute.segments.map(segment => {
+                const prediction = predictionsByRoad.get(segment.road_name);
+                const risk = prediction ? Number(prediction.risk_score || 0) : Number(segment.risk_score || 0);
+                const label = prediction ? prediction.predicted_disruption : 'No disruption predicted';
+                const severity = segment.status === 'blocked' || risk >= 0.8 ? 'danger' : risk >= 0.5 ? 'warning' : 'success';
+                return `
+                    <div class="route-segment">
+                        <div class="route-dot" style="background:${severity === 'danger' ? '#e74c3c' : severity === 'warning' ? '#f39c12' : '#27ae60'}"></div>
+                        <div style="flex:1;">
+                            <div style="font-weight:600;">${segment.road_name}</div>
+                            <div style="font-size:0.75rem; color:var(--gray);">${label} · ${risk.toFixed(2)} risk${prediction ? ' · ' + (prediction.estimated_delay_minutes || 0) + ' min delay' : ''}</div>
+                            ${renderWeather(segment.weather || (prediction && prediction.weather_data))}
+                        </div>
+                        <span class="badge badge-${severity}">${segment.status === 'blocked' ? 'BLOCKED' : (prediction ? (prediction.confidence || 'medium').toUpperCase() : 'MONITOR')}</span>
+                    </div>
+                `;
+            }).join('')}
+        </div>
+    `;
+}
+
+function getRouteAlerts() {
+    if (!selectedRoute || !selectedRoute.segments) return [];
+    const alerts = [];
+    selectedRoute.segments.forEach(segment => {
+        const weather = segment.weather;
+        const condition = String(weather?.weather_condition || '').toLowerCase();
+        const terrain = String(segment.terrain_type || '').toLowerCase();
+        if (segment.status === 'blocked') alerts.push({type: 'danger', icon: 'fa-road-circle-xmark', text: `${segment.road_name}: road is blocked.`});
+        if (condition.includes('fog') || Number(weather?.visibility_km) <= 2) alerts.push({type: 'warning', icon: 'fa-smog', text: `${segment.road_name}: fog or very low visibility.`});
+        if (condition.includes('rain') || condition.includes('torrential') || Number(weather?.rainfall_mm) >= 30) alerts.push({type: 'warning', icon: 'fa-cloud-showers-heavy', text: `${segment.road_name}: rain may make the road slippery.`});
+        if (terrain === 'hilly' || terrain === 'mountainous') {
+            alerts.push({type: 'warning', icon: 'fa-mountain-sun', text: `${segment.road_name}: hilly/mountain road, drive slowly.`});
+            alerts.push({type: 'warning', icon: 'fa-paw', text: `${segment.road_name}: possible forest or wildlife crossing; stay alert.`});
+        }
+    });
+    return alerts;
+}
+
+function renderRouteAlerts() {
+    const container = document.getElementById('route-alerts-container');
+    if (!container) return;
+    const alerts = getRouteAlerts();
+    if (!selectedRoute) {
+        container.innerHTML = '<p style="color:var(--gray);">Select a route to view route-specific alerts.</p>';
+        return;
+    }
+    container.innerHTML = alerts.length ? alerts.map(alert => `
+        <div class="alert-item ${alert.type}" style="margin-bottom:8px;">
+            <i class="fas ${alert.icon}"></i><span>${alert.text}</span>
+        </div>
+    `).join('') : '<p style="color:var(--secondary);"><i class="fas fa-circle-check"></i> No current route hazards detected.</p>';
+}
+
+function renderWeather(weather) {
+    if (!weather) return '<div style="font-size:0.75rem; color:var(--gray);">Weather data unavailable</div>';
+
+    const condition = String(weather.weather_condition || 'unknown').replaceAll('_', ' ');
+    const icon = condition.includes('thunder') ? 'fa-bolt' : condition.includes('rain') || condition.includes('torrential') ? 'fa-cloud-showers-heavy' : condition.includes('snow') ? 'fa-snowflake' : condition.includes('cloud') ? 'fa-cloud' : 'fa-sun';
+    return `<div style="font-size:0.75rem; color:var(--primary); margin-top:3px;"><i class="fas ${icon}"></i> Weather: ${condition} · ${weather.temperature ?? '--'}°C · ${weather.rainfall_mm ?? 0} mm rain · updated ${formatDate(weather.recorded_at)}</div>`;
+}
+
+function openSelectedRouteInGoogleMaps() {
+    if (!selectedRoute || !selectedRoute.path || selectedRoute.path.length < 2) return;
+
+    const origin = encodeURIComponent(selectedRoute.path[0]);
+    const destination = encodeURIComponent(selectedRoute.path[selectedRoute.path.length - 1]);
+    const waypoints = selectedRoute.path.slice(1, -1).map(encodeURIComponent).join('|');
+    const waypointQuery = waypoints ? `&waypoints=${waypoints}` : '';
+    window.open(`https://www.google.com/maps/dir/?api=1&origin=${origin}&destination=${destination}&travelmode=driving${waypointQuery}`, '_blank', 'noopener');
+}
+
+function renderSummary() {
+    const total = forecastData.length;
+    const highRisk = forecastData.filter(p => Number(p.risk_score || 0) > 0.8).length;
+    const weatherImpacted = forecastData.filter(p => (p.predicted_disruption || '').toLowerCase().includes('flood') || (p.predicted_disruption || '').toLowerCase().includes('landslide') || (p.predicted_disruption || '').toLowerCase().includes('rain')).length;
+
+    document.getElementById('prediction-count').textContent = total;
+    document.getElementById('prediction-trend').textContent = `${total} routes modeled`;
+
+    document.getElementById('high-risk-count').textContent = highRisk;
+    document.getElementById('high-risk-trend').textContent = `${Math.round((highRisk / Math.max(total, 1)) * 100)}% critical`;
+
+    document.getElementById('weather-risk-count').textContent = weatherImpacted;
+    document.getElementById('weather-risk-trend').textContent = `${Math.round((weatherImpacted / Math.max(total, 1)) * 100)}% weather-linked`;
+}
+
+function renderRiskDistribution() {
+    const container = document.getElementById('risk-distribution-container');
+    const low = forecastData.filter(p => Number(p.risk_score || 0) < 0.5).length;
+    const medium = forecastData.filter(p => Number(p.risk_score || 0) >= 0.5 && Number(p.risk_score || 0) < 0.8).length;
+    const high = forecastData.filter(p => Number(p.risk_score || 0) >= 0.8).length;
+
+    const total = Math.max(forecastData.length, 1);
+
+    const bars = [
+        { label: 'Low', value: low, color: 'success' },
+        { label: 'Medium', value: medium, color: 'warning' },
+        { label: 'High', value: high, color: 'danger' }
+    ];
+
+    container.innerHTML = bars.map(item => `
+        <div style="margin-bottom:14px;">
+            <div style="display:flex; justify-content:space-between; font-size:0.8rem; color:var(--gray); margin-bottom:4px;">
+                <span>${item.label}</span>
+                <span>${item.value}</span>
+            </div>
+            <div class="progress">
+                <div class="progress-bar ${item.color}" style="width:${(item.value / total) * 100}%"></div>
+            </div>
+        </div>
+    `).join('');
+}
+
+function renderPredictionTable() {
+    const filter = document.getElementById('prediction-filter');
+    const selected = filter ? filter.value : 'all';
+
+    const rows = forecastData.filter(item => {
+        if (selected === 'all') return true;
+        const risk = Number(item.risk_score || 0);
+        if (selected === 'high') return risk >= 0.8;
+        if (selected === 'medium') return risk >= 0.5 && risk < 0.8;
+        return risk < 0.5;
+    });
+
+    const tbody = document.querySelector('#predictions-table tbody');
+    if (!tbody) return;
+
+    if (!rows.length) {
+        tbody.innerHTML = '<tr><td colspan="6" style="text-align:center; color:var(--gray);">No predictions match this filter.</td></tr>';
+        return;
+    }
+
+    tbody.innerHTML = rows.map(item => {
+        const risk = Number(item.risk_score || 0);
+        const severity = risk >= 0.8 ? 'high' : risk >= 0.5 ? 'medium' : 'low';
+
+        return `
+            <tr>
+                <td><strong>${item.road_name || item.from + ' → ' + item.to}</strong><br><span style="font-size:0.75rem; color:var(--gray);">${item.from} → ${item.to}</span></td>
+                <td>${item.predicted_disruption || 'Disruption'}</td>
+                <td>
+                    <div style="display:flex; align-items:center; gap:8px; min-width:120px;">
+                        <div class="progress" style="flex:1; min-width:70px;">
+                            <div class="progress-bar ${severity === 'high' ? 'danger' : severity === 'medium' ? 'warning' : 'success'}" style="width:${Math.min(risk * 100, 100)}%"></div>
+                        </div>
+                        <span style="font-size:0.8rem; color:var(--gray);">${risk.toFixed(2)}</span>
+                    </div>
+                </td>
+                <td><span class="badge badge-${severity === 'high' ? 'danger' : severity === 'medium' ? 'warning' : 'success'}">${(item.confidence || 'medium').toUpperCase()}</span></td>
+                <td>${item.estimated_delay_minutes || 0} min</td>
+                <td>${item.recommended_action || 'Monitor closely'}</td>
+            </tr>
+        `;
+    }).join('');
+}
+
+function formatDate(value) {
+    if (!value) return 'N/A';
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return value;
+    return date.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
+}
+
+const filterSelect = document.getElementById('prediction-filter');
+if (filterSelect) {
+    filterSelect.addEventListener('change', renderPredictionTable);
+}
+
+try {
+    selectedRoute = JSON.parse(sessionStorage.getItem('selectedRoute') || 'null');
+} catch (error) {
+    console.error('Selected route could not be loaded:', error);
+}
+
+loadPredictions();
+setInterval(loadPredictions, 60000);
+</script>
+{% endblock %}
